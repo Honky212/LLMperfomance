@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Configs - LLM Perf Panel{% endblock %}
+{% block content %}
+<h1>Configuration Profiles</h1>
+<div class="card">
+  <h2>Add Profile</h2>
+  <form id="config-form">
+    <p><label>Name: <input type="text" name="name" required placeholder="e.g. Local Ollama"></label></p>
+    <p><label>Protocol:
+      <select name="protocol">
+        <option value="dify">Dify</option>
+        <option value="openai_compat">OpenAI Compatible</option>
+      </select>
+    </label></p>
+    <p><label>Base URL: <input type="text" name="base_url" required placeholder="http://localhost:11434"></label></p>
+    <p><label>API Key (stored plaintext in local DB): <input type="password" name="api_key" placeholder="Leave empty to use .env"></label></p>
+    <p><label>Model Name: <input type="text" name="model_name" placeholder="Required for OpenAI"></label></p>
+    <button type="submit" class="btn">Add Profile</button>
+  </form>
+</div>
+{% if profiles %}
+<div class="card">
+  <h2>Existing Profiles</h2>
+  <span id="del-status" style="color:#1a73e8;font-size:13px"></span>
+  <table id="profile-table">
+    <tr><th>ID</th><th>Name</th><th>Protocol</th><th>Base URL</th><th>Model</th><th>操作</th></tr>
+    {% for p in profiles %}
+    <tr data-id="{{ p.id }}">
+      <td>{{ p.id }}</td>
+      <td>{{ p.name }}</td>
+      <td>{{ p.protocol }}</td>
+      <td>{{ p.base_url }}</td>
+      <td>{{ p.model_name or '—' }}</td>
+      <td><button type="button" class="btn btn-danger btn-del" style="padding:2px 10px"
+        data-id="{{ p.id }}" data-name="{{ p.name }}">删除</button></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+<script>
+const $id = x => document.getElementById(x);
+function setDelStatus(msg, isErr) {
+  const el = $id('del-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isErr ? '#d93025' : '#1a73e8';
+}
+// 两段式删除：第一击进入"确认中"，5 秒内再击才真正 DELETE；不依赖 confirm()/整页刷新
+// （避免受限环境里 confirm 被静默拦截返回 false 导致"点了没反应"）
+let ARM_TIMER = null;
+document.addEventListener('click', async function(ev) {
+  const btn = ev.target.closest('.btn-del');
+  if (!btn) return;
+  ev.preventDefault();
+  const id = btn.dataset.id;
+  const name = btn.dataset.name || 'id=' + id;
+  if (!btn.dataset.armed) {
+    btn.dataset.armed = '1';
+    btn.textContent = '确认删除？';
+    btn.style.background = '#b3261e';
+    setDelStatus(`再点一次「确认删除」以删除「${name}」(id=${id})，5 秒后自动取消`, false);
+    clearTimeout(ARM_TIMER);
+    ARM_TIMER = setTimeout(() => {
+      delete btn.dataset.armed;
+      btn.textContent = '删除';
+      btn.style.background = '';
+      setDelStatus('', false);
+    }, 5000);
+    return;
+  }
+  // 第二击：真删
+  btn.disabled = true;
+  setDelStatus('删除中...', false);
+  try {
+    const r = await fetch('/api/configs/' + id, {method: 'DELETE'});
+    if (r.ok) {
+      const tr = btn.closest('tr');
+      if (tr) tr.remove();
+      setDelStatus(`已删除「${name}」(id=${id})`, false);
+      return;
+    }
+    let detail = 'HTTP ' + r.status;
+    try { const d = await r.json(); detail = d.detail || d.error || detail; } catch (_) {}
+    if (r.status === 404) {
+      detail = '接口不存在（' + detail + '）——面板进程运行的是旧代码，请完全重启面板（停止后重新执行 python web/server.py）再试';
+    } else if (r.status === 401) {
+      detail = '未授权（' + detail + '）——请在页面顶部 Token 栏填入正确的 WEB_TOKEN';
+    }
+    setDelStatus('删除失败: ' + detail, true);
+  } catch (e) {
+    setDelStatus('删除失败: ' + e, true);
+  } finally {
+    btn.disabled = false;
+    delete btn.dataset.armed;
+    btn.textContent = '删除';
+    btn.style.background = '';
+  }
+});
+
+document.getElementById('config-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const form = e.target;
+  const status = document.createElement('span');
+  const body = {
+    name: form.name.value,
+    protocol: form.protocol.value,
+    base_url: form.base_url.value,
+    api_key: form.api_key.value,
+    model_name: form.model_name.value,
+  };
+  try {
+    const r = await fetch('/api/configs', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert('新增失败: ' + (d.detail || JSON.stringify(d))); return; }
+    location.reload();
+  } catch (err) { alert('新增失败: ' + err); }
+});
+</script>
+{% endblock %}

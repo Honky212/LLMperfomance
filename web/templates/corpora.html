@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Corpora - LLM Perf Panel{% endblock %}
+{% block content %}
+<h1>Corpora（语料管理）</h1>
+
+<div class="card">
+  <h2>上传语料</h2>
+  <input type="file" id="file-input" accept=".txt">
+  <button class="btn" onclick="uploadCorpus()">Upload .txt</button>
+  <span id="up-status" style="margin-left:8px;font-size:13px"></span>
+</div>
+
+<div class="card">
+  <h2>语料列表</h2>
+  <table id="corpus-table">
+    <thead><tr><th>名称</th><th>来源</th><th>大小</th><th>行数</th><th>操作</th></tr></thead>
+    <tbody id="corpus-body"></tbody>
+  </table>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let FORCE_TARGET = null; // 待强制删除的语料 id
+
+function humanSize(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+
+async function loadCorpora() {
+  const r = await fetch('/api/corpora');
+  const data = await r.json();
+  const body = $('corpus-body');
+  body.innerHTML = '';
+  const rows = [
+    ...data.uploaded.map(c => Object.assign({}, c, { sourceLabel: '上传' })),
+    ...data.builtin.map(c => Object.assign({}, c, { sourceLabel: '内置' })),
+  ];
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5">暂无语料</td></tr>';
+    return;
+  }
+  for (const c of rows) {
+    const tr = document.createElement('tr');
+    const del = document.createElement('button');
+    del.className = 'btn btn-danger';
+    del.style.padding = '2px 10px';
+    if (c.source === 'uploaded') {
+      del.textContent = '删除';
+      del.onclick = () => confirmDelete(c);
+    } else {
+      del.textContent = '只读';
+      del.disabled = true;
+      del.style.background = '#ccc';
+    }
+    tr.innerHTML = `<td>${escapeHtml(c.name)}</td><td>${c.sourceLabel}</td>` +
+      `<td>${humanSize(c.size)}</td><td>${c.lines}</td>`;
+    const td = document.createElement('td');
+    td.appendChild(del);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+}
+
+async function uploadCorpus() {
+  const file = $('file-input').files[0];
+  const st = $('up-status');
+  if (!file) { st.textContent = '请先选择 .txt 文件'; return; }
+  st.textContent = '上传中...';
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch('/api/corpora', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) { st.textContent = '上传失败: ' + (d.detail || d.error || JSON.stringify(d)); return; }
+    st.textContent = `已上传「${d.name}」（${d.lines} 行）`;
+    $('file-input').value = '';
+    loadCorpora();
+  } catch (e) { st.textContent = '上传失败: ' + e; }
+}
+
+function confirmDelete(c) {
+  const ok = confirm(`删除语料「${c.name}」？（文件与记录一并删除）`);
+  if (ok) doDelete(c.id, false);
+}
+
+async function doDelete(id, force) {
+  const st = $('up-status');
+  try {
+    const r = await fetch(`/api/corpora/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' });
+    if (r.status === 409) {
+      const d = await r.json();
+      const runs = (d.runs || []).map(x => `#${x.id}(${x.status}/${x.script.split('/').pop()})`).join(', ');
+      FORCE_TARGET = { id, runs };
+      const msg = `${d.error}\n引用任务: ${runs || '未知'}`;
+      if (confirm(msg + '\n\n仍要强制删除吗？')) {
+        await doDelete(id, true);
+      }
+      return;
+    }
+    const d = await r.json();
+    if (!r.ok) { st.textContent = '删除失败: ' + (d.detail || d.error || JSON.stringify(d)); return; }
+    st.textContent = '已删除';
+    loadCorpora();
+  } catch (e) { st.textContent = '删除失败: ' + e; }
+}
+
+loadCorpora();
+</script>
+{% endblock %}

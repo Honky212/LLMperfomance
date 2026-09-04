@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}LLM Perf Panel{% endblock %}</title>
+<style>
+body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       max-width: 960px; margin: 0 auto; padding: 24px; background: #f8f9fa; color: #333; }
+nav { margin-bottom: 24px; border-bottom: 2px solid #e0e0e0; padding-bottom: 8px; }
+nav a { margin-right: 16px; text-decoration: none; color: #1a73e8; font-weight: 500; }
+nav a:hover { text-decoration: underline; }
+h1 { font-size: 20px; margin-bottom: 16px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 16px; }
+th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+th { background: #f5f5f5; }
+.btn { display: inline-block; padding: 6px 16px; background: #1a73e8; color: #fff;
+       border: none; border-radius: 4px; cursor: pointer; font-size: 13px; text-decoration: none; }
+.btn:hover { background: #1557b0; }
+.btn-danger { background: #d93025; }
+.btn-danger:hover { background: #b3261e; }
+.muted { color: #888; font-size: 12px; }
+.status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+                font-weight: bold; color: #fff; }
+.status-pending { background: #9e9e9e; }
+.status-running { background: #1a73e8; }
+.status-completed { background: #34a853; }
+.status-failed { background: #d93025; }
+.status-cancelled { background: #ea8600; }
+.status-orphaned { background: #7b1fa2; }
+.card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+#progress-log { font-family: monospace; font-size: 12px; background: #1e1e1e; color: #d4d4d4;
+                padding: 12px; border-radius: 4px; max-height: 400px; overflow-y: auto;
+                white-space: pre-wrap; word-break: break-all; }
+/* Token bar */
+.token-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+             padding: 8px 12px; background: #fff3cd; border-radius: 4px; font-size: 12px; }
+.token-bar.hidden { display: none; }
+.token-bar input { flex: 1; padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px;
+                   font-family: monospace; font-size: 12px; }
+.token-bar .btn-sm { padding: 4px 10px; font-size: 11px; }
+.token-ok { background: #d4edda !important; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Dashboard</a>
+  <a href="/tasks">Tasks</a>
+  <a href="/tasks/new">New Task</a>
+  <a href="/configs">Configs</a>
+  <a href="/corpora">Corpora</a>
+</nav>
+
+<!-- Token 管理条：仅在服务器启用了 WEB_TOKEN 时显示 -->
+<div id="token-bar" class="token-bar hidden">
+  <span>🔑 API Token:</span>
+  <input type="password" id="token-input" placeholder="Paste your WEB_TOKEN here">
+  <button class="btn btn-sm" onclick="saveToken()">Save</button>
+  <button class="btn btn-sm" onclick="clearToken()" style="background:#6c757d">Clear</button>
+  <span id="token-status"></span>
+</div>
+
+{% block content %}{% endblock %}
+
+<script>
+// ---- Token 管理（localStorage 持久化）----
+(function() {
+  const TOKEN_KEY = 'llmperf_web_token';
+
+  // 服务端通过 {{ require_token }} 注入标记，无需探测请求
+  {% if require_token %}
+  document.getElementById('token-bar').classList.remove('hidden');
+  const saved = localStorage.getItem(TOKEN_KEY);
+  if (saved) {
+    document.getElementById('token-input').value = saved;
+    document.getElementById('token-status').textContent = '✓ Saved';
+  }
+  {% endif %}
+
+  window.saveToken = function() {
+    const val = document.getElementById('token-input').value.trim();
+    if (!val) return;
+    localStorage.setItem(TOKEN_KEY, val);
+    document.getElementById('token-status').textContent = '✓ Saved';
+    document.getElementById('token-bar').classList.add('token-ok');
+    setTimeout(() => document.getElementById('token-bar').classList.remove('token-ok'), 1500);
+  };
+
+  window.clearToken = function() {
+    localStorage.removeItem(TOKEN_KEY);
+    document.getElementById('token-input').value = '';
+    document.getElementById('token-status').textContent = 'Cleared';
+    document.getElementById('token-bar').classList.remove('token-ok');
+  };
+
+  window.getToken = function() {
+    return localStorage.getItem(TOKEN_KEY) || '';
+  };
+
+  // 全局拦截 fetch：所有 POST/PUT/DELETE 自动带 Authorization header
+  const origFetch = window.fetch;
+  window.fetch = function(url, opts) {
+    opts = opts || {};
+    const method = (opts.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'DELETE'].includes(method)) {
+      const token = getToken();
+      if (token) {
+        opts.headers = opts.headers || {};
+        if (opts.headers instanceof Headers) {
+          opts.headers.set('Authorization', 'Bearer ' + token);
+        } else {
+          opts.headers['Authorization'] = 'Bearer ' + token;
+        }
+      }
+    }
+    return origFetch.call(this, url, opts);
+  };
+})();
+</script>
+<script>
+// ---- 任务删除（Dashboard / Tasks 列表共用，按钮 class="btn-del-task"）----
+// 与 Configs 档位删除同一"两段式"模式：第一击进入确认态，5 秒内再击才真正 DELETE。
+// 不依赖 confirm()/整页刷新（规避受限环境 confirm 被静默拦截返回 false 导致"点了没反应"）。
+(function() {
+  let armTimer = null;
+  function setStatus(msg, isErr) {
+    const el = document.getElementById('task-del-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = isErr ? '#d93025' : '#1a73e8';
+  }
+  function resetButtons() {
+    document.querySelectorAll('.btn-del-task[data-armed]').forEach(b => {
+      delete b.dataset.armed;
+      b.textContent = '删除';
+      b.style.background = '';
+    });
+  }
+  document.addEventListener('click', async function(ev) {
+    const btn = ev.target.closest('.btn-del-task');
+    if (!btn || btn.disabled) return;
+    ev.preventDefault();
+    const id = btn.dataset.id;
+    const name = btn.dataset.name || '#' + id;
+    const dir = btn.dataset.dir || 'run_' + id;
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1';
+      btn.textContent = '确认删除？';
+      btn.style.background = '#b3261e';
+      setStatus(`再点一次「确认删除」以删除任务 ${name}（记录与 results/${dir}/ 产物将一并删除，不可恢复），5 秒后自动取消`, false);
+      clearTimeout(armTimer);
+      armTimer = setTimeout(() => {
+        resetButtons();
+        setStatus('', false);
+      }, 5000);
+      return;
+    }
+    // 第二击：真删
+    btn.disabled = true;
+    setStatus('删除中...', false);
+    try {
+      const r = await fetch('/api/tasks/' + id, {method: 'DELETE'});
+      if (r.ok) {
+        const tr = btn.closest('tr');
+        if (tr) tr.remove();
+        resetButtons();
+        setStatus(`已删除任务 ${name}（含 results/${dir}/ 产物）`, false);
+        return;
+      }
+      let detail = 'HTTP ' + r.status;
+      try { const d = await r.json(); detail = d.detail || d.error || detail; } catch (_) {}
+      if (r.status === 404) {
+        detail = '接口不存在（' + detail + '）——面板进程运行的是旧代码，请完全重启面板（停止后重新执行 python web/server.py）再试';
+      } else if (r.status === 401) {
+        detail = '未授权（' + detail + '）——请在页面顶部 Token 栏填入正确的 WEB_TOKEN';
+      }
+      setStatus('删除失败: ' + detail, true);
+    } catch (e) {
+      setStatus('删除失败: ' + e, true);
+    } finally {
+      btn.disabled = false;
+      delete btn.dataset.armed;
+      btn.textContent = '删除';
+      btn.style.background = '';
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Compare Tasks - LLM Perf Panel{% endblock %}
+{% block content %}
+<h1>Compare Tasks</h1>
+
+{% if error %}
+<div class="card" style="color:#d93025">{{ error }}</div>
+{% elif runs|length < 2 %}
+<div class="card">
+  <p>Select at least 2 tasks to compare.</p>
+  <form method="get" action="/compare">
+    {% for r in all_runs %}
+    <label style="display:block;margin:4px 0">
+      <input type="checkbox" name="ids" value="{{ r.id }}">
+      {{ r.run_no or ('#' ~ r.id) }} {{ r.script }} ({{ r.status }}) — {{ r.started_at or '—' }}
+    </label>
+    {% endfor %}
+    <button type="submit" class="btn" style="margin-top:8px">Compare Selected</button>
+  </form>
+</div>
+{% else %}
+
+<div class="card">
+  <h2>Overview Comparison</h2>
+  <table>
+    <tr>
+      <th>Metric</th>
+      {% for r in runs %}
+      <th>{{ r.run_no or ('#' ~ r.id) }}<br><small>{{ r.script }}</small></th>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Status</td>
+      {% for r in runs %}
+      <td><span class="status-badge status-{{ r.status }}">{{ r.status }}</span></td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Total Requests</td>
+      {% for r in runs %}
+      <td>{{ r._totals.requests if r._totals else '—' }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Success Rate</td>
+      {% for r in runs %}
+      <td>{{ '%.1f%%'|format(r._totals.success_rate) if r._totals and r._totals.success_rate is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>RPS (success)</td>
+      {% for r in runs %}
+      <td>{{ '%.3f'|format(r._totals.rps_success) if r._totals and r._totals.rps_success is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>TTFB Avg (ms)</td>
+      {% for r in runs %}
+      <td>{{ '%.0f'|format(r._agg_metrics.ttfb_ms.avg) if r._agg_metrics and r._agg_metrics.ttfb_ms and r._agg_metrics.ttfb_ms.avg is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>TTFB p95 (ms)</td>
+      {% for r in runs %}
+      <td>{{ '%.0f'|format(r._agg_metrics.ttfb_ms.p95) if r._agg_metrics and r._agg_metrics.ttfb_ms and r._agg_metrics.ttfb_ms.p95 is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Latency p95 (ms)</td>
+      {% for r in runs %}
+      <td>{{ '%.0f'|format(r._agg_metrics.latency_ms.p95) if r._agg_metrics and r._agg_metrics.latency_ms and r._agg_metrics.latency_ms.p95 is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Wall Time (s)</td>
+      {% for r in runs %}
+      <td>{{ '%.1f'|format(r._doc.wall_time_s) if r._doc and r._doc.wall_time_s is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>By Request Type</h2>
+  {% for req_type in ['NewChat', 'ContinueChat', 'Aggregated'] %}
+  <h3>{{ req_type }}</h3>
+  <table>
+    <tr>
+      <th>Metric</th>
+      {% for r in runs %}
+      <th>#{{ r.id }}</th>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Reqs / Fails</td>
+      {% for r in runs %}
+      {% set g = r._by_type.get(req_type, {}) if r._by_type else {} %}
+      <td>{{ g.get('reqs', '—') }} / {{ g.get('fails', '—') }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>TTFB p50 / p95</td>
+      {% for r in runs %}
+      {% set m = (r._by_type.get(req_type, {}).get('metrics', {}).get('ttfb_ms', {})) if r._by_type else {} %}
+      <td>{{ '%.0f'|format(m.p50) if m.p50 is not none else '—' }} / {{ '%.0f'|format(m.p95) if m.p95 is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Latency p50 / p95</td>
+      {% for r in runs %}
+      {% set m = (r._by_type.get(req_type, {}).get('metrics', {}).get('latency_ms', {})) if r._by_type else {} %}
+      <td>{{ '%.0f'|format(m.p50) if m.p50 is not none else '—' }} / {{ '%.0f'|format(m.p95) if m.p95 is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+  </table>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Fail Categories</h2>
+  <table>
+    <tr>
+      <th>Category</th>
+      {% for r in runs %}
+      <th>#{{ r.id }}</th>
+      {% endfor %}
+    </tr>
+    {% set all_cats = [] %}
+    {% for r in runs %}{% if r._fail_cats %}{% for k in r._fail_cats.keys() %}{% if k not in all_cats %}{% set _ = all_cats.append(k) %}{% endif %}{% endfor %}{% endif %}{% endfor %}
+    {% for cat in all_cats %}
+    <tr>
+      <td>{{ cat }}</td>
+      {% for r in runs %}
+      <td>{{ r._fail_cats.get(cat, 0) if r._fail_cats else 0 }}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+    {% if not all_cats %}
+    <tr><td colspan="{{ runs|length + 1 }}">No failures in any selected task</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+{% endif %}
+{% endblock %}

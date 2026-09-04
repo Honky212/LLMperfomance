@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}New Task - LLM Perf Panel{% endblock %}
+{% block content %}
+<h1>New Task</h1>
+<div class="card">
+  <form id="task-form">
+    <p><label>Script:<br>
+      <select name="script" id="script-select"></select>
+    </label></p>
+    <p><label>Test Type: <b id="derived-type">—</b>
+      <span class="muted">（按脚本自动推导，提交时忽略手动指定值）</span></label></p>
+    <div id="fields-container"></div>
+    <p><label>Profile ID (optional):<br>
+      <select name="profile_id" id="profile-select">
+        <option value="">— None —</option>
+      </select>
+    </label></p>
+    <button type="submit" class="btn">Submit Task</button>
+    <span id="err" style="color:#d93025;margin-left:8px"></span>
+  </form>
+  <p class="muted">语料上传 / 删除见 <a href="/corpora">Corpora 页</a>；上传后可直接在下拉选用。</p>
+</div>
+<script>
+// 配置档（模板注入，仅 id/name/protocol）
+const PROFILES = {{ profiles | tojson }};
+let SCRIPTS = [];
+let CORPORA = { builtin: [], uploaded: [] };
+
+const $ = id => document.getElementById(id);
+
+function humanSize(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+
+function corpusOptions(defaultVal) {
+  const sel = document.createElement('select');
+  sel.className = 'corpus-select';
+  const mk = (items, label) => {
+    if (!items.length) return;
+    const g = document.createElement('optgroup');
+    g.label = label;
+    for (const c of items) {
+      const o = document.createElement('option');
+      o.value = c.select_value;
+      o.textContent = `${c.name}（${c.lines} 行 · ${humanSize(c.size)}）`;
+      if (c.select_value === defaultVal) o.selected = true;
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  };
+  mk(CORPORA.builtin, '内置语料');
+  mk(CORPORA.uploaded, '上传语料');
+  if (!sel.value && sel.options.length) sel.options[0].selected = true;
+  return sel;
+}
+
+function renderFields(schema) {
+  const box = $('fields-container');
+  box.innerHTML = '';
+  const derived = $('derived-type');
+  derived.textContent = schema.test_type;
+  for (const f of schema.fields) {
+    const p = document.createElement('p');
+    const lab = document.createElement('label');
+    lab.textContent = (f.label || f.key) + ':';
+    p.appendChild(lab);
+    let input;
+    if (f.kind === 'corpus') {
+      input = corpusOptions(f.default || '');
+    } else if (f.kind === 'int' || f.kind === 'float') {
+      input = document.createElement('input');
+      input.type = 'number';
+      if (f.kind === 'int') { input.step = '1'; }
+      else { input.step = 'any'; }
+      if (f.min !== null && f.min !== undefined) input.min = f.min;
+      if (f.max !== null && f.max !== undefined) input.max = f.max;
+      input.value = (f.default === null || f.default === undefined) ? '' : f.default;
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = f.hint || '';
+      if (f.pattern) input.pattern = f.pattern;
+      input.value = (f.default === null || f.default === undefined) ? '' : f.default;
+    }
+    input.dataset.key = f.key;
+    input.dataset.kind = f.kind;
+    if (f.hint) { lab.title = f.hint; }
+    p.appendChild(document.createElement('br'));
+    p.appendChild(input);
+    if (f.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'muted';
+      hint.textContent = ' ' + f.hint;
+      p.appendChild(hint);
+    }
+    box.appendChild(p);
+  }
+  renderProfiles(schema);
+}
+
+function renderProfiles(schema) {
+  const sel = $('profile-select');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">— None —</option>';
+  const protocol = schema.protocol;
+  for (const p of PROFILES) {
+    if (protocol !== 'any' && p.protocol !== protocol) continue; // P1-4 协议过滤
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = `${p.name} (${p.protocol})`;
+    sel.appendChild(o);
+  }
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+
+function onScriptChange() {
+  const s = SCRIPTS.find(x => x.script === $('script-select').value);
+  if (s) renderFields(s);
+}
+
+async function init() {
+  try {
+    const [sRes, cRes] = await Promise.all([fetch('/api/scripts'), fetch('/api/corpora')]);
+    if (!sRes.ok || !cRes.ok) throw new Error('初始化接口失败');
+    SCRIPTS = await sRes.json();
+    CORPORA = await cRes.json();
+    renderScripts();
+    onScriptChange();
+  } catch (e) {
+    $('err').textContent = '加载脚本/语料失败: ' + e;
+  }
+}
+
+function renderScripts() {
+  const sel = $('script-select');
+  sel.innerHTML = '';
+  for (const s of SCRIPTS) {
+    const o = document.createElement('option');
+    o.value = s.script;
+    o.textContent = s.label;
+    sel.appendChild(o);
+  }
+}
+
+$('script-select').addEventListener('change', onScriptChange);
+
+$('task-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  $('err').textContent = '';
+  const schema = SCRIPTS.find(x => x.script === $('script-select').value);
+  if (!schema) return;
+  const params = {};
+  for (const el of $('fields-container').querySelectorAll('[data-key]')) {
+    const raw = el.value.trim();
+    if (raw === '') continue; // 留空：走服务端默认/脚本缺省
+    if (el.dataset.kind === 'int' || el.dataset.kind === 'float') {
+      params[el.dataset.key] = Number(raw);
+    } else {
+      params[el.dataset.key] = raw;
+    }
+  }
+  const body = {
+    script: $('script-select').value,
+    params: params,
+    profile_id: $('profile-select').value ? parseInt($('profile-select').value, 10) : null,
+  };
+  try {
+    const r = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      const msg = d.errors ? Object.values(d.errors).join('; ') : (d.detail || JSON.stringify(d));
+      $('err').textContent = '提交失败: ' + msg;
+      return;
+    }
+    window.location.href = '/tasks/' + d.id;
+  } catch (err) {
+    $('err').textContent = '提交失败: ' + err;
+  }
+});
+
+init();
+</script>
+{% endblock %}

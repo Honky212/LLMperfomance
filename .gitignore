@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# 环境配置（含 API Key，禁止提交；模板为 .env.example）
+.env
+
+# 测试运行产物（每次运行自动生成，不入库）
+results/
+logs/
+# Web 面板运行日志（目录名是 log/，旧写法 logs/ 未盖住实际目录）
+log/
+
+# Web 面板运行数据（SQLite 库含明文 API Key + 上传语料 + 测试产物，禁止提交）
+web/data/

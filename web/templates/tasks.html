@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Tasks - LLM Perf Panel{% endblock %}
+{% block content %}
+<h1>Tasks</h1>
+<a href="/tasks/new" class="btn">+ New Task</a>
+{% if runs %}
+<p id="task-del-status" style="min-height:18px;font-size:13px"></p>
+<table style="margin-top:16px">
+  <tr><th>ID</th><th>Type</th><th>Script</th><th>Status</th><th>Started</th><th>Ended</th><th>操作</th></tr>
+  {% for r in runs %}
+  {% set label = r.run_no or r.id %}
+  <tr>
+    <td><a href="/tasks/{{ r.id }}" title="URL 使用内部 ID {{ r.id }}">{{ label }}</a></td>
+    <td>{{ r.test_type }}</td>
+    <td>{{ r.script }}</td>
+    <td><span class="status-badge status-{{ r.status }}">{{ r.status }}</span></td>
+    <td>{{ r.started_at or '—' }}</td>
+    <td>{{ r.finished_at or '—' }}</td>
+    <td>
+      {% if r.status in ('running', 'pending') %}
+      <button type="button" class="btn btn-danger btn-del-task" disabled
+              title="任务执行中，先取消后再删除" style="padding:2px 10px"
+              data-id="{{ r.id }}" data-name="{{ label }}" data-dir="run_{{ label }}">删除</button>
+      {% else %}
+      <button type="button" class="btn btn-danger btn-del-task" style="padding:2px 10px"
+              data-id="{{ r.id }}" data-name="{{ label }}" data-dir="run_{{ label }}">删除</button>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No tasks yet.</p>
+{% endif %}
+<script>
+// 修复 #16：存在执行中/待执行任务时自动刷新列表，任务结束后删除按钮自动恢复可点
+{% set _active = runs | selectattr('status', 'in', ['running', 'pending']) | list %}
+{% if _active %}
+setTimeout(function() { location.reload(); }, 20000);
+{% endif %}
+</script>
+{% endblock %}
