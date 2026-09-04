@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Task {{ run.run_no or ('#' ~ run.id) }} - LLM Perf Panel{% endblock %}
+{% block content %}
+<h1>Task {% if run.run_no %}Run {{ run.run_no }}{% else %}#{{ run.id }}{% endif %}</h1>
+{% if run.run_no %}
+<p class="muted">展示 ID {{ run.run_no }} 为启动时刻（YYYYMMDDHHMM），产物目录 results/run_{{ run.run_no }}/；URL 与接口使用内部 ID {{ run.id }}。</p>
+{% endif %}
+<div class="card">
+  <p><b>Status:</b> <span class="status-badge status-{{ run.status }}" id="status-badge">{{ run.status }}</span></p>
+  <p><b>Type:</b> {{ run.test_type }} | <b>Script:</b> {{ run.script }}</p>
+  <p><b>Started:</b> {{ run.started_at or '—' }} | <b>Finished:</b> <span id="finished-at">{{ run.finished_at or '—' }}</span></p>
+  {% if run.error %}<p style="color:#d93025"><b>Error:</b> {{ run.error }}</p>{% endif %}
+  {% if run.status == 'cancelled' %}
+  <p class="muted">任务已取消（locust 类任务被强杀，可能无汇总产物或残留部分逐用户 CSV）。</p>
+  {% endif %}
+  {% if run.status == 'running' %}
+  <button class="btn btn-danger" onclick="cancelTask({{ run.id }})">Cancel</button>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>提交参数（实际执行口径以 summary JSON 的 params 为准）</h2>
+  <pre style="white-space:pre-wrap;word-break:break-all;background:#f5f5f5;padding:8px;border-radius:4px;font-size:12px">{{ run.params_json }}</pre>
+</div>
+
+<div class="card">
+  <h2>Real-time Progress</h2>
+  <div id="progress-log">Waiting for events...</div>
+</div>
+
+{% if run.html_report %}
+<div class="card">
+  <h2>HTML Report</h2>
+  {% if run.html_report[0] in ['/', '\\'] or ':' in run.html_report[:3] %}
+  <p class="muted">报告文件（旧记录绝对路径，仅展示文本）: <code>{{ run.html_report }}</code></p>
+  {% else %}
+  {# html_report 为项目根相对路径（如 results/run_26/xxx.html），
+     /results 挂载点即 PROJECT_ROOT/results，故 URL 直接 "/" + html_report，勿再拼 /results/ 前缀 #}
+  <iframe src="/{{ run.html_report }}" style="width:100%;height:600px;border:none"></iframe>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if run.status == 'completed' and run.summary_json %}
+<div class="card">
+  <h2>Diagnosis</h2>
+  <button class="btn" onclick="triggerAnalysis({{ run.id }}, 'rule')">Run Rule Analysis</button>
+  <button class="btn" onclick="triggerAnalysis({{ run.id }}, 'llm')" style="background:#7b1fa2">Run LLM Analysis</button>
+  <span id="analysis-status" style="margin-left:8px;font-size:12px;color:#666"></span>
+</div>
+{% endif %}
+
+{% if analyses %}
+<div class="card">
+  <h2>Analysis Results</h2>
+  {% for a in analyses %}
+  <div style="margin-bottom:12px;padding:8px;background:#fafafa;border-radius:4px">
+    <b>{{ a.engine }}</b> ({{ a.status }}) — {{ a.created_at }}
+    {% if a.report_md %}<pre style="white-space:pre-wrap;font-size:12px;margin-top:4px">{{ a.report_md }}</pre>{% endif %}
+    {% if a._findings %}
+    <table style="font-size:12px;margin-top:6px">
+      <tr><th>严重度</th><th>规则</th><th>说明</th><th>值</th></tr>
+      {% for f in a._findings %}
+      <tr>
+        <td>{{ f.get('severity') }}</td>
+        <td><code>{{ f.get('rule') }}</code></td>
+        <td>{{ f.get('message') }}</td>
+        <td>{{ f.get('value') if f.get('value') is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script>
+(function() {
+  const taskId = {{ run.id }};
+  const log = document.getElementById('progress-log');
+  const badge = document.getElementById('status-badge');
+  const finishedAt = document.getElementById('finished-at');
+  const initialStatus = {{ run.status | tojson }};
+  let maxSeq = 0;
+  let live = false;
+  let es = null;          // 提升到闭包：status 收敛 / 轮询兜底可关闭连接
+  let pollTimer = null;   // 30s 状态轮询兜底（修复 #16）
+
+  function appendLog(msg) {
+    log.textContent += msg + '\n';
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function renderProgress(ev) {
+    if (ev.seq && ev.seq <= maxSeq) return; // 幂等去重
+    if (ev.seq) maxSeq = ev.seq;
+    const type = ev.type || 'unknown';
+    if (type === 'round_done') {
+      appendLog(`[Round ${ev.round}] ${ev.req_type} ok=${ev.ok} ttfb=${ev.ttfb_ms}ms elapsed=${ev.elapsed_ms}ms`);
+    } else if (type === 'start') {
+      appendLog(`[Start] script=${ev.script} test_type=${ev.test_type} expected=${ev.expected_rounds}`);
+    } else if (type === 'done') {
+      appendLog(`[Done] summary=${ev.summary_json || '—'}`);
+    } else if (type === 'status') {
+      // 双保险：终态事件若以 progress 名到达（旧数据/异常路径），同样收敛徽标
+      updateStatus(ev);
+    } else if (type === 'error') {
+      appendLog(`[Error] ${ev.message}`);
+    } else {
+      appendLog(`[${type}] ${JSON.stringify(ev)}`);
+    }
+  }
+
+  function updateStatus(data) {
+    badge.textContent = data.status;
+    badge.className = 'status-badge status-' + data.status;
+    if (data.status !== 'running') {
+      appendLog(`\n=== Task ${data.status} ===`);
+    }
+  }
+
+  // 终态收敛：更新徽标、关闭 SSE、停止轮询（幂等）
+  function finalizeStatus(status) {
+    updateStatus({ status: status });
+    if (es) { es.close(); es = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  // 轮询兜底（修复 #16）：SSE 故障/面板代码重启后页面不永久陈旧
+  function pollStatus() {
+    fetch(`/api/tasks/${taskId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.status && d.status !== 'running' && d.status !== 'pending') {
+          appendLog('[poll] detected terminal status: ' + d.status);
+          finalizeStatus(d.status);
+        }
+      })
+      .catch(() => { /* 网络瞬时失败忽略，下个周期再试 */ });
+  }
+
+  function connectSSE() {
+    const token = (typeof getToken === 'function') ? getToken() : '';
+    const url = `/api/tasks/${taskId}/events${token ? '?token=' + token : ''}`;
+    es = new EventSource(url);
+
+    es.addEventListener('backlog', function(e) {
+      try {
+        const events = JSON.parse(e.data);
+        appendLog(`--- Backlog: ${events.length} events ---`);
+        events.forEach(renderProgress);
+        // backlog 已含终态事件（任务在连接前已结束）：收敛徽标并关闭连接
+        const terminal = events.find(x => x.type === 'status');
+        if (terminal) {
+          finalizeStatus(terminal.status);
+        }
+      } catch(err) { appendLog('[backlog parse error] ' + err); }
+    });
+
+    es.addEventListener('caught_up', function() {
+      live = true;
+      appendLog('--- Live ---');
+    });
+
+    es.addEventListener('progress', function(e) {
+      try { renderProgress(JSON.parse(e.data)); }
+      catch(err) { appendLog('[progress parse error] ' + err); }
+    });
+
+    es.addEventListener('status', function(e) {
+      try { finalizeStatus(JSON.parse(e.data).status); }
+      catch(err) { appendLog('[status parse error] ' + err); }
+    });
+
+    es.onerror = function() {
+      // 修复 #9/#16：不 close、不手动重建——EventSource 会自动重连并携带
+      // Last-Event-ID 头，服务端据此增量回放；同时触发一次轮询兜底
+      appendLog('[SSE disconnected, browser will auto-reconnect]');
+      pollStatus();
+    };
+  }
+
+  // 任务未结束才连 SSE + 起轮询；终态页直接展示服务端渲染的徽标，零连接（修复 #16）
+  if (initialStatus === 'running' || initialStatus === 'pending') {
+    connectSSE();
+    pollTimer = setInterval(pollStatus, 30000);
+  }
+})();
+
+function triggerAnalysis(id, engine) {
+  const statusEl = document.getElementById('analysis-status');
+  statusEl.textContent = 'Running ' + engine + ' analysis...';
+  fetch(`/api/tasks/${id}/analysis?engine=${engine}`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      statusEl.textContent = engine + ' analysis done (run: ' + d.analysis_run_id.slice(0,8) + ')';
+      setTimeout(() => location.reload(), 1000);
+    })
+    .catch(e => { statusEl.textContent = 'Failed: ' + e; });
+}
+
+function cancelTask(id) {
+  if (!confirm('Cancel this task?')) return;
+  fetch(`/api/tasks/${id}/cancel`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => { location.reload(); })
+    .catch(e => alert('Cancel failed: ' + e));
+}
+</script>
+{% endblock %}
