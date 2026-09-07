@@ -1,7 +1,7 @@
 # LLMperfomance —— LLM 对话 API 性能测试工具集
 
-针对 LLM 流式（SSE）对话接口的性能测试项目，主要面向 Dify/Open ai 风格的
-`POST /v1/chat-messages` 接口，覆盖三种测试形态：
+针对 LLM 流式（SSE）对话接口的性能测试项目，主要面向 Dify 风格的
+`POST /v1/chat-messages` 接口，面向 Open ai 兼容接口基础 URL（SDK 自动拼接 `/chat/completions`，覆盖三种测试形态：
 
 1. **单线程多轮对话 + TTFB（首包时间）测量**
 2. **多线程并发对话 + 完整问答记录（CSV）**
