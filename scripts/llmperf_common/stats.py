@@ -266,7 +266,7 @@ def save_report_md(report_path, *, script, protocol, endpoint, model, params,
         lines += [
             "# 压测汇总",
             "",
-            "> 由 `scripts/multi_thread_record.py` 与 `scripts/openai_compat_multi_thread_record.py` "
+            "> 由 `scripts/dify_concurrent.py` 与 `scripts/openai_compat_concurrent.py` "
             "经 `llmperf_common/stats.py` 统一生成，每次运行追加一条记录。",
             "",
         ]

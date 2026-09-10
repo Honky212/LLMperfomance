@@ -3,7 +3,7 @@
 多线程多轮对话压测脚本（Dify 风格 API 版）
 
 请求 POST {LLM_API_URL}/v1/chat-messages，通过 conversation_id 维持多轮会话；
-本脚本是 openai_compat_multi_thread_record.py 的 Dify 风格孪生版：
+本脚本是 openai_compat_concurrent.py 的 Dify 风格孪生版：
 - 线程池并发模拟多个用户，每个用户按语料顺序进行多轮对话，
   每用户结果写入 results/chat_responses_{user_id}.csv
   （TTFB / 整轮耗时 / 响应长度 / ITL / 生成速率 / 内容块数，G1 指标列）
@@ -13,9 +13,9 @@
 - 配置从项目根目录 .env 读取（LLM_API_URL / API_KEY），已存在的系统环境变量优先于 .env
 
 用法:
-  python scripts/multi_thread_record.py
-  python scripts/multi_thread_record.py --users 20 --threads 10 --rounds 10
-  python scripts/multi_thread_record.py --corpus corpus/50QA-2.txt --sleep 0
+  python scripts/dify_concurrent.py
+  python scripts/dify_concurrent.py --users 20 --threads 10 --rounds 10
+  python scripts/dify_concurrent.py --corpus corpus/50QA-2.txt --sleep 0
 """
 import os
 import csv
@@ -233,8 +233,8 @@ def parse_args():
     parser.add_argument("--users", type=int, default=5, help="模拟用户总数(默认5)")
     parser.add_argument("--threads", type=int, default=5, help="并发线程数(默认5)")
     parser.add_argument("--rounds", type=int, default=10, help="每个用户对话轮数，即取语料前N条(默认10)")
-    parser.add_argument("--corpus", default=os.path.join(config.PROJECT_ROOT, "corpus", "50QA-1.txt"),
-                        help="语料文件路径，每行一个问题(默认 corpus/50QA-1.txt)")
+    parser.add_argument("--corpus", default=os.path.join(config.PROJECT_ROOT, "corpus", "test1.txt"),
+                        help="语料文件路径，每行一个问题(默认 corpus/test1.txt)")
     parser.add_argument("--sleep", type=float, default=1.0, help="轮次间思考时间秒，0表示持续压测(默认1.0)")
     parser.add_argument("--timeout", type=float, default=120.0, help="单请求超时秒(默认120)")
     parser.add_argument("--report", default=os.path.join(config.PROJECT_ROOT, "压测汇总.md"),

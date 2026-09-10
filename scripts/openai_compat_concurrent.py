@@ -2,7 +2,7 @@
 """
 多线程多轮对话压测脚本（OpenAI 兼容 API 版）
 
-本脚本是 multi_thread_record.py（Dify 版）的 OpenAI 兼容孪生版：
+本脚本是 dify_concurrent.py（Dify 版）的 OpenAI 兼容孪生版：
 - Dify 版通过 conversation_id 维持多轮会话；本版本按 OpenAI 标准以 messages 历史维持上下文
 - API 地址/Key/模型名从项目根目录 .env 读取（OPENAI_BASE_URL / OPENAI_API_KEY / MODEL_NAME），
   已存在的系统环境变量优先于 .env
@@ -13,9 +13,9 @@
   并追加写入项目根目录 压测汇总.md、输出机器可读 results/summary_openai_*.json（G3）
 
 用法:
-  python scripts/openai_compat_multi_thread_record.py
-  python scripts/openai_compat_multi_thread_record.py --users 20 --threads 10 --rounds 10
-  python scripts/openai_compat_multi_thread_record.py --corpus corpus/test2.txt --sleep 0
+  python scripts/openai_compat_concurrent.py
+  python scripts/openai_compat_concurrent.py --users 20 --threads 10 --rounds 10
+  python scripts/openai_compat_concurrent.py --corpus corpus/test2.txt --sleep 0
 
 说明:
   --rounds 表示“每个用户最多执行几轮”，但会被语料长度限制：

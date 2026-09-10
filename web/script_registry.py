@@ -41,13 +41,13 @@ SCRIPT_REGISTRY = {
     },
 
     # ---- ① Dify 单线程基线 ----
-    "scripts/single_dialog_ttfb.py": {
+    "scripts/dify_baseline.py": {
         "label": "Baseline - Dify（单线程基线 TTFB）",
         "test_type": "baseline",
         "protocol": "dify",
         "launcher": "python",
         "fields": [
-            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/50QA-1.txt",
+            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/test1.txt",
              "target": "cli", "flag": "--corpus"},
             {"key": "rounds", "kind": "int", "label": "轮数(0=语料全量)", "default": 0,
              "min": 0, "target": "cli", "flag": "--rounds"},
@@ -55,13 +55,13 @@ SCRIPT_REGISTRY = {
     },
 
     # ---- ② OpenAI 单线程基线 ----
-    "scripts/openai_compat_dialog_ttfb.py": {
+    "scripts/openai_compat_baseline.py": {
         "label": "Baseline - OpenAI（单线程基线 TTFB）",
         "test_type": "baseline",
         "protocol": "openai_compat",
         "launcher": "python",
         "fields": [
-            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/50QA-1.txt",
+            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/test1.txt",
              "target": "cli", "flag": "--corpus"},
             {"key": "rounds", "kind": "int", "label": "轮数(0=语料全量)", "default": 0,
              "min": 0, "target": "cli", "flag": "--rounds"},
@@ -69,14 +69,14 @@ SCRIPT_REGISTRY = {
     },
 
     # ---- ③ Dify 多线程并发 ----
-    "scripts/multi_thread_record.py": {
+    "scripts/dify_concurrent.py": {
         "label": "Concurrent - Dify（多线程并发）",
         "test_type": "concurrent",
         "protocol": "dify",
         "launcher": "python",
         "report_to_result_dir": True,   # --report 重定向 result_dir/压测汇总.md（V2.0 §5.4）
         "fields": [
-            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/50QA-1.txt",
+            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/test1.txt",
              "target": "cli", "flag": "--corpus"},
             {"key": "users", "kind": "int", "label": "用户总数", "default": 5,
              "min": 1, "target": "cli", "flag": "--users"},
@@ -92,7 +92,7 @@ SCRIPT_REGISTRY = {
     },
 
     # ---- ④ OpenAI 多线程并发 ----
-    "scripts/openai_compat_multi_thread_record.py": {
+    "scripts/openai_compat_concurrent.py": {
         "label": "Concurrent - OpenAI（多线程并发）",
         "test_type": "concurrent",
         "protocol": "openai_compat",
@@ -115,13 +115,13 @@ SCRIPT_REGISTRY = {
     },
 
     # ---- ⑤ Dify 耐力（Locust）----
-    "scripts/locust_multi_dialog.py": {
+    "scripts/dify_endurance_locust.py": {
         "label": "Endurance - Dify (Locust)",
         "test_type": "endurance",
         "protocol": "dify",
         "launcher": "locust",
         "fields": [
-            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/50QA-1.txt",
+            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/test1.txt",
              "target": "env", "env_name": "LOCUST_CORPUS"},
             {"key": "users", "kind": "int", "label": "并发用户数", "default": 50,
              "min": 1, "target": "locust", "locust_arg": "-u"},
@@ -138,7 +138,7 @@ SCRIPT_REGISTRY = {
     },
 
     # ---- ⑥ OpenAI 耐力（Locust）----
-    "scripts/openai_compat_locust_multi_dialog.py": {
+    "scripts/openai_compat_endurance_locust.py": {
         "label": "Endurance - OpenAI (Locust)",
         "test_type": "endurance",
         "protocol": "openai_compat",

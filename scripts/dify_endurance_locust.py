@@ -4,24 +4,24 @@ Locust 多用户多轮对话压测脚本（Dify 风格 API 版）
 
 请求 POST {LLM_API_URL}/v1/chat-messages（SSE 流式），通过 conversation_id 维持多轮会话。
 - 地址/Key 从项目根目录 .env 读取（LLM_API_URL / API_KEY），命令行 --host 优先于 LLM_API_URL
-- 语料默认读取 corpus/50QA-1.txt，可用环境变量 LOCUST_CORPUS 覆盖
+- 语料默认读取 corpus/test1.txt，可用环境变量 LOCUST_CORPUS 覆盖
 - 逐用户记录问答明细到 results/locust/chat_responses_<uuid>.csv
   （含 TTFB / 整轮耗时 / 响应长度 / ITL / 生成速率 / 内容块数，G1 指标列）
 
 用法:
   # Web 界面模式（默认 8089 端口，host 默认取 .env 的 LLM_API_URL）
-  locust -f scripts/locust_multi_dialog.py
+  locust -f scripts/dify_endurance_locust.py
   # 无界面模式示例：20 用户、每秒启动 2 个、运行 2 分钟
-  locust -f scripts/locust_multi_dialog.py --headless -u 20 -r 2 -t 2m
+  locust -f scripts/dify_endurance_locust.py --headless -u 20 -r 2 -t 2m
   # 显式指定 host（覆盖 .env）
-  locust -f scripts/locust_multi_dialog.py --host http://115.25.86.121
+  locust -f scripts/dify_endurance_locust.py --host http://115.25.86.121
   # 指定语料（等价于设置环境变量）
   $env:LOCUST_CORPUS = "corpus\\short10words.txt"
-  locust -f scripts/locust_multi_dialog.py --headless -u 10 -r 2 -t 5m
+  locust -f scripts/dify_endurance_locust.py --headless -u 10 -r 2 -t 5m
 
 耐力压测（找模型变慢/崩溃的临界点）:
   $env:LOCUST_WAIT_TIME = "0"
-  locust -f scripts/locust_multi_dialog.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
+  locust -f scripts/dify_endurance_locust.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
 
 注意：
 - 必须传 stream=True，否则 requests 会在返回前把整个 SSE 响应体读完，
@@ -58,8 +58,8 @@ if not VERIFY_SSL:
 # 默认 host 取自 .env 的 LLM_API_URL（命令行 --host 优先）
 _DEFAULT_HOST = os.environ.get("LLM_API_URL", "").strip()
 
-# 语料文件（默认 50QA-1.txt，可用环境变量 LOCUST_CORPUS 覆盖）
-CORPUS_FILE = os.environ.get("LOCUST_CORPUS", "") or os.path.join(config.PROJECT_ROOT, "corpus", "50QA-1.txt")
+# 语料文件（默认 test1.txt，可用环境变量 LOCUST_CORPUS 覆盖）
+CORPUS_FILE = os.environ.get("LOCUST_CORPUS", "") or os.path.join(config.PROJECT_ROOT, "corpus", "test1.txt")
 
 TURNS_PER_TASK = 3   # 每个多轮任务连续发送的对话轮数（首轮新建会话 + 后续 TURNS_PER_TASK-1 轮追问）
 ANSWER_MIN_LEN = 10  # 响应完整性校验阈值（字符）
@@ -96,7 +96,7 @@ config.check_dify_key(_api_key_check)
 
 # 加载时打印配置预览（Key 脱敏）
 _k_masked = config.mask_key(_api_key_check)
-print(f"[locust_multi_dialog] host={_DEFAULT_HOST or '需命令行 --host 指定'} | key={_k_masked} | "
+print(f"[dify_endurance_locust] host={_DEFAULT_HOST or '需命令行 --host 指定'} | key={_k_masked} | "
       f"corpus={CORPUS_FILE} | turns_per_task={TURNS_PER_TASK} | timeout={REQUEST_TIMEOUT}s")
 
 # V2.2 §3.2.2：模块级 StatsCollector 单例，Locust 多线程/协程用户共用（自带 Lock）
@@ -315,7 +315,7 @@ def _on_test_start(environment, **kwargs):
     """Locust test_start 时发出 progress.start（endurance 类型 expected_rounds=null）"""
     progress.emit({
         "type": "start",
-        "script": "locust_multi_dialog.py",
+        "script": "dify_endurance_locust.py",
         "protocol": "dify",
         "test_type": "endurance",
         "params": {"corpus": os.path.basename(CORPUS_FILE),
@@ -333,7 +333,7 @@ def _on_test_stop(environment, **kwargs):
         host = environment.host or _DEFAULT_HOST or ""
         summary_path = perf_stats.save_report_json(
             output_dir,
-            script="locust_multi_dialog.py",
+            script="dify_endurance_locust.py",
             protocol="dify",
             endpoint=host.rstrip("/") + "/v1/chat-messages",
             model="",

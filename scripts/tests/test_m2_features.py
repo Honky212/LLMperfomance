@@ -27,7 +27,7 @@ def _make_summary(**overrides):
     doc = {
         "schema_version": 1,
         "timestamp": "2026-09-03T10:00:00",
-        "script": "multi_thread_record.py",
+        "script": "dify_concurrent.py",
         "protocol": "dify",
         "endpoint": "http://test/v1/chat-messages",
         "model": "",
@@ -94,7 +94,7 @@ class TestHtmlReportGeneration(unittest.TestCase):
 
     def test_baseline_rps_warning(self):
         """基线脚本 HTML 中 RPS 带警告标注（V2.2 修订 #8）"""
-        doc = _make_summary(script="single_dialog_ttfb.py")
+        doc = _make_summary(script="dify_baseline.py")
         with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False, encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False)
             json_path = f.name
@@ -220,7 +220,7 @@ class TestFindingsFormat(unittest.TestCase):
         findings = run_rule_engine(doc, DEFAULT_THRESHOLDS)
         md = format_findings_md(findings, doc)
         self.assertIn("| 严重度 | 规则 | 说明 |", md)
-        self.assertIn("multi_thread_record.py", md)
+        self.assertIn("dify_concurrent.py", md)
 
 
 class TestAutoPostRun(unittest.TestCase):

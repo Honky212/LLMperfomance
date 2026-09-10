@@ -69,8 +69,8 @@ def chat(query, conversation_id=''):
 def parse_args():
     """argparse 全部提供与现状一致的默认值，裸跑行为不变（V2.2 §3.2.1）。"""
     p = argparse.ArgumentParser(description="Dify 基线 TTFB 测试（单线程多轮对话）")
-    p.add_argument("--corpus", default=os.path.join(config.PROJECT_ROOT, "corpus", "50QA-1.txt"),
-                   help="语料文件路径（默认 corpus/50QA-1.txt）")
+    p.add_argument("--corpus", default=os.path.join(config.PROJECT_ROOT, "corpus", "test1.txt"),
+                   help="语料文件路径（默认 corpus/test1.txt）")
     p.add_argument("--rounds", type=int, default=0,
                    help="最多执行轮数；0 = 语料全量（默认）")
     p.add_argument("--output", default=None,
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     collector = stats_mod.StatsCollector()
     progress.emit({
         "type": "start",
-        "script": "single_dialog_ttfb.py",
+        "script": "dify_baseline.py",
         "protocol": "dify",
         "test_type": "baseline",
         "params": {"corpus": os.path.basename(args.corpus), "rounds": len(questions)},
@@ -192,7 +192,7 @@ if __name__ == '__main__':
         wall_time = time.time() - wall_start
         summary_path = stats_mod.save_report_json(
             output_dir,
-            script="single_dialog_ttfb.py",
+            script="dify_baseline.py",
             protocol="dify",
             endpoint=API_URL + "/v1/chat-messages",
             model="",

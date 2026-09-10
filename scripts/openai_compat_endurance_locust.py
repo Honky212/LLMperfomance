@@ -2,7 +2,7 @@
 """
 Locust 多用户多轮对话压测脚本（OpenAI 兼容 API 版）
 
-本脚本是 locust_multi_dialog.py（Dify 版）的 OpenAI 兼容孪生版：
+本脚本是 dify_endurance_locust.py（Dify 版）的 OpenAI 兼容孪生版：
 - Dify 版请求 /v1/chat-messages 并以 conversation_id 维持会话；
   本版本请求 /chat/completions（SSE 流式），以 messages 历史维持多轮上下文
 - 地址/Key/模型从项目根目录 .env 读取（OPENAI_BASE_URL / OPENAI_API_KEY / MODEL_NAME），
@@ -11,16 +11,16 @@ Locust 多用户多轮对话压测脚本（OpenAI 兼容 API 版）
 
 用法:
   # Web 界面模式（默认 8089 端口，host 默认取 .env 的 OPENAI_BASE_URL）
-  locust -f scripts/openai_compat_locust_multi_dialog.py
+  locust -f scripts/openai_compat_endurance_locust.py
   # 无界面模式示例：20 用户、每秒启动 2 个、运行 2 分钟
-  locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 20 -r 2 -t 2m
+  locust -f scripts/openai_compat_endurance_locust.py --headless -u 20 -r 2 -t 2m
   # 显式指定 host（覆盖 .env）
-  locust -f scripts/openai_compat_locust_multi_dialog.py --host http://172.18.10.3:3000/v1
+  locust -f scripts/openai_compat_endurance_locust.py --host http://172.18.10.3:3000/v1
 
 耐力压测（找模型变慢/崩溃的临界点）:
   # 10 秒内拉起 50 用户，收到回复立即发下一条（零思考时间），跑 30 分钟并输出 HTML/CSV 报告
   $env:LOCUST_WAIT_TIME = "0"
-  locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
+  locust -f scripts/openai_compat_endurance_locust.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
   # 判断方法：观察周期性统计中 ChatCompletions-TTFB / ChatCompletions-Total 的中位数和
   # 高分位是否随时间持续抬升（变慢），以及 # fails 是否开始增长（崩溃/超时）
 
@@ -105,7 +105,7 @@ config.check_model(os.environ.get("MODEL_NAME", "").strip())
 
 # 加载时打印配置预览（Key 脱敏）
 _k_masked = config.mask_key(_api_key_check)
-print(f"[openai_compat_locust] host={_DEFAULT_HOST or '需命令行 --host 指定'} | "
+print(f"[openai_compat_endurance_locust] host={_DEFAULT_HOST or '需命令行 --host 指定'} | "
       f"model={os.environ.get('MODEL_NAME', '')} | key={_k_masked} | corpus={CORPUS_FILE} | "
       f"max_turns={MAX_TURNS} | timeout={REQUEST_TIMEOUT}s")
 
@@ -323,7 +323,7 @@ class OpenAICompatChatUser(HttpUser):
 def _on_test_start(environment, **kwargs):
     progress.emit({
         "type": "start",
-        "script": "openai_compat_locust_multi_dialog.py",
+        "script": "openai_compat_endurance_locust.py",
         "protocol": "openai_compat",
         "test_type": "endurance",
         "params": {"corpus": os.path.basename(CORPUS_FILE),
@@ -341,7 +341,7 @@ def _on_test_stop(environment, **kwargs):
         host = environment.host or _DEFAULT_HOST or ""
         summary_path = perf_stats.save_report_json(
             output_dir,
-            script="openai_compat_locust_multi_dialog.py",
+            script="openai_compat_endurance_locust.py",
             protocol="openai_compat",
             endpoint=config.normalize_base_url(host).rstrip("/") + "/chat/completions",
             model=os.environ.get("MODEL_NAME", ""),

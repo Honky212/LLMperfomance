@@ -36,7 +36,7 @@ LLMperfomance/
 │   ├── short10words.txt ~ long3000words.txt   # 10~3000 字分档长文本语料
 │   ├── test1.txt            # OpenAI 兼容 Locust 脚本默认语料（逐行问题集）
 │   ├── test2.txt            # OpenAI 兼容多线程脚本默认语料（逐行问题集）
-│   └── 50QA-1.txt / 50QA-2.txt                # QA 问题集（单线程/多线程脚本默认语料）
+│   └── 50QA-1.txt / 50QA-2.txt                # QA 问题集（各 50 条；仓库当前未包含）
 ├── scripts/                 # 核心测试脚本（见下方说明）
 │   ├── llmperf_common/      # 公共模块（config / sse / stats，仅标准库，零第三方依赖）
 │   ├── tests/               # 离线单测（unittest：test_sse.py / test_stats.py）
@@ -63,10 +63,10 @@ Copy-Item .env.example .env
 |---|---|---|
 | `LLM_API_URL` | Dify 应用基础地址（脚本自动拼接 `/v1/chat-messages`） | scripts/ 原有 3 个脚本 |
 | `API_KEY` | Dify 应用 API Key | scripts/ 原有 3 个脚本 |
-| `OPENAI_BASE_URL` | OpenAI 兼容接口基础 URL（SDK 自动拼接 `/chat/completions`） | openai_compat_dialog_ttfb.py、openai_compat_multi_thread_record.py、openai_compat_locust_multi_dialog.py |
+| `OPENAI_BASE_URL` | OpenAI 兼容接口基础 URL（SDK 自动拼接 `/chat/completions`） | openai_compat_baseline.py、openai_compat_concurrent.py、openai_compat_endurance_locust.py |
 | `OPENAI_API_KEY` | OpenAI 兼容接口 Key：登录后于「令牌」页面创建 | 所有 OpenAI 兼容接口脚本 |
 | `MODEL_NAME` | 模型 ID：渠道中配置的模型名 | 所有 OpenAI 兼容接口脚本 |
-| `OPENAI_MAX_TOKENS` | 最大输出 token 数（0 = 不限制） | openai_compat_dialog_ttfb.py、openai_compat_locust_multi_dialog.py |
+| `OPENAI_MAX_TOKENS` | 最大输出 token 数（0 = 不限制） | openai_compat_baseline.py、openai_compat_endurance_locust.py |
 | `VERIFY_SSL` | 是否校验 TLS 证书；设置为 `false` 时仅在本地自签名环境下临时关闭校验 | 所有脚本 |
 
 ## Web 面板（web/，可选）
@@ -93,18 +93,18 @@ python web/server.py                  # 默认 http://127.0.0.1:8686
 
 ## 脚本说明
 
-### 1. `scripts/single_dialog_ttfb.py` —— 单线程多轮对话 + TTFB
-- 逐行读取 `corpus/50QA-1.txt` 中的问题（可在代码中更换），在同一会话（conversation）中连续提问
+### 1. `scripts/dify_baseline.py` —— 单线程多轮对话 + TTFB
+- 逐行读取 `corpus/test1.txt` 中的问题（可用 `--corpus` 更换），在同一会话（conversation）中连续提问
 - 正确测量 TTFB：请求发出前开始计时；只有在收到真实回答内容时才记录首包时间，避免状态事件/空事件被误记为 TTFB
 - 对 Dify 的 `conversation_id` 兼容读取 `conversation_started` / `message` 两种事件，防止上下文断开
 - 结果写入 `results/dialogue_log0.csv`（问题 / 回答 / 总耗时 / TTFB / 会话 ID / ITL / 生成速率 / 内容块数）
 
 ```powershell
-python scripts/single_dialog_ttfb.py
+python scripts/dify_baseline.py
 ```
 
-### 2. `scripts/openai_compat_dialog_ttfb.py` —— OpenAI 兼容协议多轮对话 + TTFB
-- 测试形态与 `single_dialog_ttfb.py` 相同，但采用 OpenAI 兼容协议（`POST /v1/chat/completions`，SSE 流式）
+### 2. `scripts/openai_compat_baseline.py` —— OpenAI 兼容协议多轮对话 + TTFB
+- 测试形态与 `dify_baseline.py` 相同，但采用 OpenAI 兼容协议（`POST /v1/chat/completions`，SSE 流式）
 - 可直接打 DeepSeek 官方 API、vLLM、Ollama、one-api 令牌代理等 OpenAI 兼容服务
 - 多轮上下文通过 messages 消息历史维持（OpenAI 协议无 conversation_id 概念）
 - 真实 TTFB 仅在 `delta.content` 首次出现时统计，避免首个 SSE 状态块被误计入性能指标
@@ -112,11 +112,11 @@ python scripts/single_dialog_ttfb.py
 - 结果写入 `results/openai_dialogue_log.csv`（问题 / 回答 / 总耗时 / TTFB）
 
 ```powershell
-python scripts/openai_compat_dialog_ttfb.py
+python scripts/openai_compat_baseline.py
 ```
 
-### 3. `scripts/multi_thread_record.py` —— Dify 风格多线程压测 + Locust 风格汇总
-- `openai_compat_multi_thread_record.py` 的 Dify 风格孪生版：纯 `requests` 实现（不依赖 Locust），
+### 3. `scripts/dify_concurrent.py` —— Dify 风格多线程压测 + Locust 风格汇总
+- `openai_compat_concurrent.py` 的 Dify 风格孪生版：纯 `requests` 实现（不依赖 Locust），
   `Session` 连接复用、用户队列 + 线程池调度，以 `conversation_id` 维持多轮上下文
 - 配置从 `.env` 读取：`LLM_API_URL` / `API_KEY` / `VERIFY_SSL`；用户数/线程数/轮数等全部命令行可配
 - 每用户一个 CSV 记录问答明细（含 TTFB / 整轮耗时 / 响应长度 / ITL / 生成速率 / 内容块数），
@@ -127,12 +127,12 @@ python scripts/openai_compat_dialog_ttfb.py
   `results/summary_dify_*.json`
 
 ```powershell
-python scripts/multi_thread_record.py                          # 默认 5 用户×10 轮
-python scripts/multi_thread_record.py --users 20 --threads 10 --rounds 10 --sleep 0
+python scripts/dify_concurrent.py                          # 默认 5 用户×10 轮
+python scripts/dify_concurrent.py --users 20 --threads 10 --rounds 10 --sleep 0
 ```
 
-### 4. `scripts/openai_compat_multi_thread_record.py` —— OpenAI 兼容协议多线程压测
-- `multi_thread_record.py` 的 OpenAI 兼容孪生版：以 `messages` 历史替代 `conversation_id` 维持多轮上下文
+### 4. `scripts/openai_compat_concurrent.py` —— OpenAI 兼容协议多线程压测
+- `dify_concurrent.py` 的 OpenAI 兼容孪生版：以 `messages` 历史替代 `conversation_id` 维持多轮上下文
 - 配置从 `.env` 读取：`OPENAI_BASE_URL` / `OPENAI_API_KEY` / `MODEL_NAME` / `VERIFY_SSL`；用户数/线程数/轮数等全部命令行可配
 - 每用户一个 CSV 记录问答明细（含 TTFB / 整轮耗时 / 响应长度 / ITL / 生成速率 / 内容块数），
   并在回答过短时回滚上下文避免伪命中；统计口径与 Dify 版一致（NewChat / ContinueChat / Aggregated 分组）
@@ -141,25 +141,25 @@ python scripts/multi_thread_record.py --users 20 --threads 10 --rounds 10 --slee
   `results/summary_openai_*.json`
 
 ```powershell
-python scripts/openai_compat_multi_thread_record.py                          # 默认 5 用户×10 轮
-python scripts/openai_compat_multi_thread_record.py --users 20 --threads 10 --rounds 10 --sleep 0
+python scripts/openai_compat_concurrent.py                          # 默认 5 用户×10 轮
+python scripts/openai_compat_concurrent.py --users 20 --threads 10 --rounds 10 --sleep 0
 ```
 
-### 5. `scripts/locust_multi_dialog.py` —— Locust 多用户多轮对话压测
+### 5. `scripts/dify_endurance_locust.py` —— Locust 多用户多轮对话压测
 - Locust 压测版：每用户独立 `conversation_id`，任务权重区分"多轮对话"与"会话初始化"
 - 逐用户记录问答与响应时间到 `results/locust/chat_responses_<uuid>.csv`
 - 带响应完整性校验（回答长度阈值）与错误事件处理，`VERIFY_SSL` 统一控制 TLS 校验行为
-- 语料默认 `corpus/50QA-1.txt`，可用环境变量 `LOCUST_CORPUS` 覆盖
+- 语料默认 `corpus/test1.txt`，可用环境变量 `LOCUST_CORPUS` 覆盖
 
 ```powershell
 # Web 界面模式（默认 8089 端口，在浏览器里设置并发数）
-locust -f scripts/locust_multi_dialog.py --host http://115.25.86.121
+locust -f scripts/dify_endurance_locust.py --host http://115.25.86.121
 # 无界面模式示例：50 用户、每秒启动 5 个、运行 2 分钟
-locust -f scripts/locust_multi_dialog.py --host http://115.25.86.121 --headless -u 50 -r 5 -t 2m
+locust -f scripts/dify_endurance_locust.py --host http://115.25.86.121 --headless -u 50 -r 5 -t 2m
 ```
 
-### 6. `scripts/openai_compat_locust_multi_dialog.py` —— Locust OpenAI 兼容协议压测
-- `locust_multi_dialog.py` 的 OpenAI 兼容孪生版：请求 `/chat/completions`（SSE 流式），
+### 6. `scripts/openai_compat_endurance_locust.py` —— Locust OpenAI 兼容协议压测
+- `dify_endurance_locust.py` 的 OpenAI 兼容孪生版：请求 `/chat/completions`（SSE 流式），
   以 `messages` 历史替代 `conversation_id` 维持多轮上下文
 - host 默认取自 `.env` 的 `OPENAI_BASE_URL`（命令行 `--host` 优先），Key/模型读取
   `OPENAI_API_KEY` / `MODEL_NAME` / `VERIFY_SSL`；配置缺失时快速失败
@@ -174,12 +174,12 @@ locust -f scripts/locust_multi_dialog.py --host http://115.25.86.121 --headless 
 
 ```powershell
 # Web 界面模式（host 自动取自 .env）
-locust -f scripts/openai_compat_locust_multi_dialog.py
+locust -f scripts/openai_compat_endurance_locust.py
 # 无界面模式示例：2 用户、每秒启动 2 个、运行 2 分钟
-locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 2 -r 2 -t 2m
+locust -f scripts/openai_compat_endurance_locust.py --headless -u 2 -r 2 -t 2m
 # 耐力压测（找模型变慢/崩溃的临界点）：10 秒拉起 50 用户、零思考时间持续发、跑 30 分钟
 $env:LOCUST_WAIT_TIME = "0"
-locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
+locust -f scripts/openai_compat_endurance_locust.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
 ```
 
 - 压测调优环境变量：`LOCUST_WAIT_TIME`（思考时间秒数，`0` = 收到回复立即发下一条，缺省 1~3 秒）、
@@ -197,8 +197,8 @@ locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 50 -r 5 -t 
 |---|---|
 | `short10words.txt` ~ `long3000words.txt` | 10 / 100 / 300 / 500 / 1000 / 2000 / 3000 字分档长文本，用于"输入长度 × 并发数"矩阵测试 |
 | `test1.txt` | 逐行短问题集（OpenAI 兼容 Locust 脚本默认语料） |
-| `test2.txt` | 逐行短问题集（`openai_compat_multi_thread_record.py` 默认语料；长文本输入测试请用上方 `long*words.txt` 分档语料） |
-| `50QA-1.txt` / `50QA-2.txt` | 问答式问题集（单线程/多线程 Dify 脚本默认语料；各 50 条） |
+| `test2.txt` | 逐行短问题集（`openai_compat_concurrent.py` 默认语料；长文本输入测试请用上方 `long*words.txt` 分档语料） |
+| `50QA-1.txt` / `50QA-2.txt` | 问答式问题集（各 50 条；仓库当前未包含，Dify 脚本默认语料已改用 `test1.txt`） |
 
 ## 测试输出说明（results/）
 
@@ -224,7 +224,7 @@ locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 50 -r 5 -t 
   （不含 TTFB）的字符产出速率；内容块不足或时刻异常时为 null
 - **失败轮次样本口径**：失败轮**不入全局聚合统计**（控制台 / 压测汇总.md / JSON 仅统计成功轮次，
   与 TTFB / 整轮耗时口径一致）；失败分布按 `fail_category` 计数。**逐轮 CSV 的留档行为因脚本族而异**：
-  基线脚本（`single_dialog_ttfb.py` / `openai_compat_dialog_ttfb.py`）失败轮也保留一行
+  基线脚本（`dify_baseline.py` / `openai_compat_baseline.py`）失败轮也保留一行
   （answer 为空或"请求失败"，便于人工复盘）；多线程与 Locust 脚本失败轮**不写入逐轮 CSV**
   （CSV 无 fail 标记列，中途流断已收的测量值仅用于失败计数）
 - **口径声明**：ITL 与生成速率为客户端测量，包含网络抖动与服务端批处理间隙，
