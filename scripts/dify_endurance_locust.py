@@ -1,36 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Locust 多用户多轮对话压测脚本（OpenAI 兼容 API 版）
+Locust 多用户多轮对话压测脚本（Dify 风格 API 版）
 
-本脚本是 locust_multi_dialog.py（Dify 版）的 OpenAI 兼容孪生版：
-- Dify 版请求 /v1/chat-messages 并以 conversation_id 维持会话；
-  本版本请求 /chat/completions（SSE 流式），以 messages 历史维持多轮上下文
-- 地址/Key/模型从项目根目录 .env 读取（OPENAI_BASE_URL / OPENAI_API_KEY / MODEL_NAME），
-  Locust 命令行 --host 参数优先于 OPENAI_BASE_URL
+请求 POST {LLM_API_URL}/v1/chat-messages（SSE 流式），通过 conversation_id 维持多轮会话。
+- 地址/Key 从项目根目录 .env 读取（LLM_API_URL / API_KEY），命令行 --host 优先于 LLM_API_URL
 - 语料默认读取 corpus/test1.txt，可用环境变量 LOCUST_CORPUS 覆盖
+- 逐用户记录问答明细到 results/locust/chat_responses_<uuid>.csv
+  （含 TTFB / 整轮耗时 / 响应长度 / ITL / 生成速率 / 内容块数，G1 指标列）
 
 用法:
-  # Web 界面模式（默认 8089 端口，host 默认取 .env 的 OPENAI_BASE_URL）
-  locust -f scripts/openai_compat_locust_multi_dialog.py
+  # Web 界面模式（默认 8089 端口，host 默认取 .env 的 LLM_API_URL）
+  locust -f scripts/dify_endurance_locust.py
   # 无界面模式示例：20 用户、每秒启动 2 个、运行 2 分钟
-  locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 20 -r 2 -t 2m
+  locust -f scripts/dify_endurance_locust.py --headless -u 20 -r 2 -t 2m
   # 显式指定 host（覆盖 .env）
-  locust -f scripts/openai_compat_locust_multi_dialog.py --host http://<gateway-host>:3000/v1
+  locust -f scripts/dify_endurance_locust.py --host http://<dify-host>
+  # 指定语料（等价于设置环境变量）
+  $env:LOCUST_CORPUS = "corpus\\short10words.txt"
+  locust -f scripts/dify_endurance_locust.py --headless -u 10 -r 2 -t 5m
 
 耐力压测（找模型变慢/崩溃的临界点）:
-  # 10 秒内拉起 50 用户，收到回复立即发下一条（零思考时间），跑 30 分钟并输出 HTML/CSV 报告
   $env:LOCUST_WAIT_TIME = "0"
-  locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
-  # 判断方法：观察周期性统计中 ChatCompletions-TTFB / ChatCompletions-Total 的中位数和
-  # 高分位是否随时间持续抬升（变慢），以及 # fails 是否开始增长（崩溃/超时）
+  locust -f scripts/dify_endurance_locust.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
 
 注意：
+- 必须传 stream=True，否则 requests 会在返回前把整个 SSE 响应体读完，
+  Locust 内置统计要等 with 块退出才上报（clients.py:391），导致生成期间图表完全不动
 - stream=True 时 Locust 内置统计只计到响应头到达（≈首个 SSE 数据块到达），因此本脚本
-  拆分为两个统计行：ChatCompletions-TTFB（响应头到达耗时）与 ChatCompletions-Total
-  （含流式消费的完整往返）。口径注意：-TTFB 行并非首真实内容时间，首真实内容口径的
-  TTFB 记录在逐用户 CSV 的 ttfb_ms 字段中
-- 实测该模型单轮流式生成约 15~25 秒（回答 ~1200-2100 字符），单用户单位时间请求数
-  偏低属正常现象，评估容量时请关注并发执行情况和总吞吐
+  拆分为两组统计行：NewChat-TTFB / ContinueChat-TTFB（响应头到达耗时）与
+  NewChat-Total / ContinueChat-Total（含流式消费的完整往返）。
+  口径注意：Locust 报表中 -TTFB 行是"响应头到达"耗时，并非首真实回答内容时间；
+  首真实回答内容口径的 TTFB 记录在逐用户 CSV 的 ttfb_ms 字段中
+- 判断方法：观察统计中 -TTFB / -Total 的中位数和高分位是否随时间持续抬升（变慢），
+  以及 # fails 是否开始增长（崩溃/超时）
 """
 import os
 import uuid
@@ -47,31 +49,23 @@ from llmperf_common import sse
 from llmperf_common import progress
 from llmperf_common.html_report import auto_post_run
 
-# 配置加载与自检由公共模块统一；host 可来自命令行 --host，故此处仅加载与解析、不校验 OPENAI_BASE_URL
+# 配置加载与自检由公共模块统一；host 可来自命令行 --host，故此处仅加载与解析、不校验 LLM_API_URL
 config.load_env()
 VERIFY_SSL = config.parse_verify_ssl()
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 默认 host 取自 .env 的 OPENAI_BASE_URL（命令行 --host 优先；误填完整接口地址自动截取）
-_DEFAULT_HOST = config.normalize_base_url(os.environ.get("OPENAI_BASE_URL", "").strip())
+# 默认 host 取自 .env 的 LLM_API_URL（命令行 --host 优先）
+_DEFAULT_HOST = os.environ.get("LLM_API_URL", "").strip()
 
 # 语料文件（默认 test1.txt，可用环境变量 LOCUST_CORPUS 覆盖）
 CORPUS_FILE = os.environ.get("LOCUST_CORPUS", "") or os.path.join(config.PROJECT_ROOT, "corpus", "test1.txt")
 
-TURNS_PER_TASK = 3   # 每个多轮任务连续发送的对话轮数
-ANSWER_MIN_LEN = 10  # 响应完整性校验阈值（字符，与 Dify 版一致）
+TURNS_PER_TASK = 3   # 每个多轮任务连续发送的对话轮数（首轮新建会话 + 后续 TURNS_PER_TASK-1 轮追问）
+ANSWER_MIN_LEN = 10  # 响应完整性校验阈值（字符）
 
 
 # ---- 压测调优参数（环境变量，压测耐力/找崩溃场景常用） ----
-def _int_env(name, default):
-    try:
-        return int(os.environ.get(name, "") or default)
-    except ValueError:
-        print(f"警告: {name} 非法，使用默认值 {default}")
-        return default
-
-
 def _float_env(name, default):
     try:
         return float(os.environ.get(name, "") or default)
@@ -93,53 +87,43 @@ def _build_wait_time():
 
 
 WAIT_TIME = _build_wait_time()
-# LOCUST_MAX_TURNS: 保留最近 N 轮历史(一轮=一问一答)，防止长跑上下文膨胀撑爆模型窗口；0 = 不限制
-MAX_TURNS = _int_env("LOCUST_MAX_TURNS", 10)
 # LOCUST_TIMEOUT: 相邻响应数据包之间的超时秒数，超时计失败，用于发现模型挂起/卡死
 REQUEST_TIMEOUT = _float_env("LOCUST_TIMEOUT", 300)
 
-# 配置自检（快速失败，避免跑起来才发现全是 401/404）；host 可来自命令行，故仅校验 Key 与模型
-_api_key_check = os.environ.get("OPENAI_API_KEY", "").strip()
-config.check_openai_key(_api_key_check)
-config.check_model(os.environ.get("MODEL_NAME", "").strip())
+# 配置自检（快速失败，避免跑起来才发现全是 401）；host 可来自命令行，故不校验 LLM_API_URL
+_api_key_check = os.environ.get("API_KEY", "").strip()
+config.check_dify_key(_api_key_check)
 
 # 加载时打印配置预览（Key 脱敏）
 _k_masked = config.mask_key(_api_key_check)
-print(f"[openai_compat_locust] host={_DEFAULT_HOST or '需命令行 --host 指定'} | "
-      f"model={os.environ.get('MODEL_NAME', '')} | key={_k_masked} | corpus={CORPUS_FILE} | "
-      f"max_turns={MAX_TURNS} | timeout={REQUEST_TIMEOUT}s")
+print(f"[dify_endurance_locust] host={_DEFAULT_HOST or '需命令行 --host 指定'} | key={_k_masked} | "
+      f"corpus={CORPUS_FILE} | turns_per_task={TURNS_PER_TASK} | timeout={REQUEST_TIMEOUT}s")
 
-# V2.2 §3.2.2：模块级 StatsCollector 单例
+# V2.2 §3.2.2：模块级 StatsCollector 单例，Locust 多线程/协程用户共用（自带 Lock）
 _COLLECTOR = perf_stats.StatsCollector()
 _WALL_START = time.time()
 
 
-class OpenAICompatChatUser(HttpUser):
+class ChatUser(HttpUser):
     host = _DEFAULT_HOST or None  # 为 None 时命令行必须提供 --host
     wait_time = WAIT_TIME         # 思考时间，可用 LOCUST_WAIT_TIME=0 设为持续压测
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.user_id = str(uuid.uuid4())  # 生成唯一用户ID
-        self.api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        self.model = os.environ.get("MODEL_NAME", "").strip()
-        try:
-            self.max_tokens = int(os.environ.get("OPENAI_MAX_TOKENS", "0") or 0)
-        except ValueError:
-            self.max_tokens = 0
-        self.messages = []   # 多轮对话历史（替代 Dify 的 conversation_id）
-        self.q_index = 0     # 语料轮换索引
-        self.max_turns = MAX_TURNS
+        self.api_key = os.environ.get("API_KEY", "").strip()
         self.request_timeout = REQUEST_TIMEOUT
+        self.conversation_id = ""
         self.test_prompt = self.read_test_prompt()
+        self.q_index = 0     # 语料轮换游标
 
-        # V2.2 修订 #1：逐用户 CSV 走 resolve_output_dir("locust")
+        # V2.2 修订 #1：逐用户 CSV 走 resolve_output_dir("locust")，裸跑仍为 results/locust/
         _locust_dir = config.resolve_output_dir("locust")
         os.makedirs(_locust_dir, exist_ok=True)
-        self.csv_file = os.path.join(_locust_dir, f"openai_chat_responses_{self.user_id}.csv")
+        self.csv_file = os.path.join(_locust_dir, f"chat_responses_{self.user_id}.csv")
         with open(self.csv_file, "w", newline="", encoding="utf-8-sig") as f:
-            csv.writer(f).writerow(["timestamp", "user_id", "question", "answer",
-                                    "ttfb_ms", "response_time_ms", "response_length",
+            csv.writer(f).writerow(["timestamp", "user_id", "conversation_id", "question",
+                                    "answer", "ttfb_ms", "response_time_ms", "response_length",
                                     "itl_avg_ms", "itl_p95_ms", "gen_chars_per_sec", "chunk_count"])
 
     def read_test_prompt(self):
@@ -160,45 +144,55 @@ class OpenAICompatChatUser(HttpUser):
 
     @task(weight=3)
     def multi_round_chat(self):
-        """多轮对话任务：在同一上下文中连续发送 TURNS_PER_TASK 轮"""
+        """多轮对话任务：在同一会话中连续发送 TURNS_PER_TASK 轮"""
         if not self.test_prompt:
             return
-        for _ in range(TURNS_PER_TASK):
-            if not self.chat_once(self.next_question()):
+
+        # 第一轮：新建会话（无 conversation_id），问题取自轮换游标
+        q = self.next_question()
+        result, _ = self.chat(q, "", "NewChat")
+        if not result:
+            return  # 首轮失败拿不到 conversation_id，无法继续追问
+        self.conversation_id = result["conversation_id"]
+        self.save_to_csv(q, result)
+
+        # 后续轮次：基于同一会话继续追问
+        for _ in range(TURNS_PER_TASK - 1):
+            q = self.next_question()
+            result, _ = self.chat(q, self.conversation_id, "ContinueChat")
+            if not result:
                 break  # 单轮失败则放弃本次任务剩余轮次
+            self.conversation_id = result["conversation_id"] or self.conversation_id
+            self.save_to_csv(q, result)
 
     @task(weight=1)
     def init_conversation(self):
-        """开启新会话：清空历史并从语料取题提问（OpenAI 协议无服务端会话，
-        对应 Dify 版的"新建会话"）。
+        """开启新会话任务：仅模拟"用户新开一个会话"的请求负载。
+        此处产生的 conversation_id 不做保存——multi_round_chat 任务每次都会自行
+        新建会话，保存它不会被任何后续逻辑消费（原有赋值为死代码，已移除）"""
+        result, _ = self.chat("你是谁", "", "NewChat")
+        if result:
+            self.save_to_csv("你是谁", result)
 
-        修复 #12：原实现调 chat_once("") 被其 `if not question: return None`
-        短路——该 weight=1 任务从不发请求、无统计、无 CSV，纯空转；现补真实请求。
-        """
-        self.messages = []
-        if not self.test_prompt:
-            return
-        self.chat_once(self.next_question())
-
-    def chat_once(self, question):
-        """发送一轮对话，成功返回 {"answer", "ttfb_ms", "elapsed_ms"}，失败返回 None"""
-        if not question:
-            return None
-        start_time = time.time()
+    def chat(self, query, conversation_id, name):
+        """发送一轮对话，返回 (result, elapsed_ms)；失败时 result 为 None"""
         payload = {
-            "model": self.model,
-            "messages": self.messages + [{"role": "user", "content": question}],
-            "stream": True,
+            "inputs": {},
+            "query": query,
+            "user": f"loadtest_{self.user_id}",
+            "response_mode": "streaming"
         }
-        if self.max_tokens > 0:
-            payload["max_tokens"] = self.max_tokens
+        if conversation_id:
+            payload["conversation_id"] = conversation_id
+
+        start_time = time.time()
 
         # 注意：stream=True 时，Locust 内置统计的耗时在收到响应头时即定格，
-        # 实际等于 TTFB，因此命名为 ChatCompletions-TTFB；
-        # 完整往返耗时（含流式正文消费）由下方 ChatCompletions-Total 单独上报
+        # 实际等于 TTFB，因此命名为 <name>-TTFB；
+        # 完整往返耗时（含流式正文消费）由下方 <name>-Total 单独上报
         try:
             with self.client.post(
-                    "/chat/completions",
+                    "/v1/chat-messages",
                     json=payload,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
@@ -206,45 +200,39 @@ class OpenAICompatChatUser(HttpUser):
                     },
                     stream=True,
                     catch_response=True,
-                    name="ChatCompletions-TTFB",
+                    name=f"{name}-TTFB",
                     timeout=self.request_timeout
             ) as response:
-                result, sr = self.handle_stream_response(response, start_time)
+                result, sr = self.handle_stream_response(response, start_time, name)
         except Exception as e:
             # 请求建立阶段异常（response 尚未拿到，handle_stream_response 不会执行）：
             # 归类并上报失败（修订 A；勿重复包装流内异常——流内异常由解析器/既有 except 分支处理）
             sr = sse.failed_result(perf_stats.classify_exception(e), str(e)[:200],
                                    start_time=start_time)
-            _COLLECTOR.record("ChatCompletions", False, ttfb_ms=0.0,
-                              latency_ms=sr.elapsed_ms, length=0,
-                              fail_category=sr.fail_category)
+            # V2.2 §3.2.2：连接阶段失败也进 StatsCollector
+            _COLLECTOR.record(name, False, ttfb_ms=0.0, latency_ms=sr.elapsed_ms,
+                              length=0, fail_category=sr.fail_category)
             progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                           "ok": False, "req_type": "ChatCompletions", "ttfb_ms": 0.0,
+                           "ok": False, "req_type": name, "ttfb_ms": 0.0,
                            "elapsed_ms": round(sr.elapsed_ms, 2)})
             result = None
 
         # 完整往返时间单独上报为一个统计项
         self.environment.events.request.fire(
             request_type="POST",
-            name="ChatCompletions-Total",
+            name=f"{name}-Total",
             response_time=sr.elapsed_ms,
             response_length=len(result["answer"]) if result else 0,
             exception=None if result else Exception(sr.fail_reason or "unknown error"),
             context={},
         )
+        return result, sr.elapsed_ms
 
-        if result:
-            # 本轮对话入历史，维持多轮上下文
-            self.messages.append({"role": "user", "content": question})
-            self.messages.append({"role": "assistant", "content": result["answer"]})
-            # 历史裁剪：防止长时间耐力压测时上下文无限膨胀（0 = 不限制）
-            if self.max_turns > 0 and len(self.messages) > self.max_turns * 2:
-                self.messages = self.messages[-self.max_turns * 2:]
-            self.save_to_csv(question, result)
-        return result
+    def handle_stream_response(self, response, start_time, name):
+        """处理 Dify SSE 流式响应，返回 (result, sr)；失败时 result 为 None（P3 起由 sse 统一解析）
 
-    def handle_stream_response(self, response, start_time):
-        """处理 OpenAI SSE 流式响应，返回 (result, sr)；失败时 result 为 None（P3 起由 sse 统一解析）"""
+        name: 请求类型统计名（NewChat / ContinueChat，由 chat() 传入）。
+        """
         if response.status_code != 200:
             # Locust safe-mode：连接失败返回 status_code=0 且带 .error 的 LocustResponse（不抛异常），
             # 需按其 error 归类为 connection_error/timeout；真实 HTTP 非 200 才归 http_error（修订 A 实证）
@@ -260,35 +248,37 @@ class OpenAICompatChatUser(HttpUser):
                 sr = sse.failed_result("http_error", reason, start_time=start_time)
             # 修复 #11：HTTP 非 200 分支同样记 StatsCollector + 进度事件
             # （此前漏计，summary JSON / HTML 报告的失败分布看不到 http 层失败）
-            _COLLECTOR.record("ChatCompletions", False, ttfb_ms=0.0,
-                              latency_ms=sr.elapsed_ms, length=0,
-                              fail_category=sr.fail_category)
+            _COLLECTOR.record(name, False, ttfb_ms=0.0, latency_ms=sr.elapsed_ms,
+                              length=0, fail_category=sr.fail_category)
             progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                           "ok": False, "req_type": "ChatCompletions", "ttfb_ms": 0.0,
+                           "ok": False, "req_type": name, "ttfb_ms": 0.0,
                            "elapsed_ms": round(sr.elapsed_ms, 2)})
             return None, sr
 
-        sr = sse.consume_openai_sse(response.iter_lines(), start_time=start_time,
-                                    min_answer_len=ANSWER_MIN_LEN)
+        sr = sse.consume_dify_sse(response.iter_lines(), start_time=start_time,
+                                  min_answer_len=ANSWER_MIN_LEN)
         if sr.fail_category is not None:
             response.failure(sr.fail_reason or sr.fail_category)
-            _COLLECTOR.record("ChatCompletions", False, ttfb_ms=sr.ttfb_ms or 0.0,
+            # V2.2 §3.2.2：失败轮次也进 StatsCollector（ITL/gen 仅 ok=True 并入样本）
+            _COLLECTOR.record(name, False, ttfb_ms=sr.ttfb_ms or 0.0,
                               latency_ms=sr.elapsed_ms, length=0,
                               fail_category=sr.fail_category)
             progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                           "ok": False, "req_type": "ChatCompletions",
+                           "ok": False, "req_type": name,
                            "ttfb_ms": round(sr.ttfb_ms or 0.0, 2),
                            "elapsed_ms": round(sr.elapsed_ms, 2)})
             return None, sr
         response.success()
-        result = {"answer": sr.answer, "ttfb_ms": sr.ttfb_ms, "elapsed_ms": sr.elapsed_ms,
+        result = {"answer": sr.answer, "conversation_id": sr.conversation_id,
+                  "ttfb_ms": sr.ttfb_ms, "elapsed_ms": sr.elapsed_ms,
                   "itl_ms": sr.itl_ms, "gen_chars_per_sec": sr.gen_chars_per_sec,
                   "chunk_count": sr.chunk_count}
-        _COLLECTOR.record("ChatCompletions", True, ttfb_ms=sr.ttfb_ms or 0.0,
+        # V2.2 §3.2.2：成功轮次进 StatsCollector
+        _COLLECTOR.record(name, True, ttfb_ms=sr.ttfb_ms or 0.0,
                           latency_ms=sr.elapsed_ms, length=len(sr.answer),
                           itl_ms=sr.itl_ms, gen_chars_per_sec=sr.gen_chars_per_sec)
         progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                       "ok": True, "req_type": "ChatCompletions",
+                       "ok": True, "req_type": name,
                        "ttfb_ms": round(sr.ttfb_ms or 0.0, 2),
                        "elapsed_ms": round(sr.elapsed_ms, 2)})
         return result, sr
@@ -303,8 +293,9 @@ class OpenAICompatChatUser(HttpUser):
                 ttfb = round(result["ttfb_ms"], 1) if result["ttfb_ms"] is not None else ""
                 itl_avg, itl_p95 = sse.itl_summary(result.get("itl_ms") or [])
                 gen = result.get("gen_chars_per_sec")
-                csv.writer(f).writerow([timestamp, self.user_id, clean_question, clean_answer,
-                                        ttfb, round(result["elapsed_ms"], 1), len(result["answer"]),
+                csv.writer(f).writerow([timestamp, self.user_id, result["conversation_id"],
+                                        clean_question, clean_answer, ttfb,
+                                        round(result["elapsed_ms"], 1), len(result["answer"]),
                                         round(itl_avg, 1) if itl_avg is not None else "",
                                         round(itl_p95, 1) if itl_p95 is not None else "",
                                         round(gen, 1) if gen is not None else "",
@@ -321,19 +312,20 @@ class OpenAICompatChatUser(HttpUser):
 # ---- V2.2 §3.2.2：test_stop 钩子写 summary JSON + progress 事件 ----
 
 def _on_test_start(environment, **kwargs):
+    """Locust test_start 时发出 progress.start（endurance 类型 expected_rounds=null）"""
     progress.emit({
         "type": "start",
-        "script": "openai_compat_locust_multi_dialog.py",
-        "protocol": "openai_compat",
+        "script": "dify_endurance_locust.py",
+        "protocol": "dify",
         "test_type": "endurance",
         "params": {"corpus": os.path.basename(CORPUS_FILE),
-                   "turns_per_task": TURNS_PER_TASK,
-                   "model": os.environ.get("MODEL_NAME", "")},
+                   "turns_per_task": TURNS_PER_TASK},
         "expected_rounds": None,
     })
 
 
 def _on_test_stop(environment, **kwargs):
+    """Locust test_stop 时写出 summary JSON（受 LLMPERF_SUMMARY 控制）并发 progress.done"""
     wall_time = time.time() - _WALL_START
     output_dir = config.resolve_output_dir()
     summary_path = None
@@ -341,13 +333,12 @@ def _on_test_stop(environment, **kwargs):
         host = environment.host or _DEFAULT_HOST or ""
         summary_path = perf_stats.save_report_json(
             output_dir,
-            script="openai_compat_locust_multi_dialog.py",
-            protocol="openai_compat",
-            endpoint=config.normalize_base_url(host).rstrip("/") + "/chat/completions",
-            model=os.environ.get("MODEL_NAME", ""),
+            script="dify_endurance_locust.py",
+            protocol="dify",
+            endpoint=host.rstrip("/") + "/v1/chat-messages",
+            model="",
             params={"corpus": os.path.basename(CORPUS_FILE),
                     "turns_per_task": TURNS_PER_TASK,
-                    "max_turns": MAX_TURNS,
                     "locust_distributed": False},
             wall_time=wall_time,
             stats=_COLLECTOR,
@@ -358,6 +349,7 @@ def _on_test_stop(environment, **kwargs):
     progress.emit({"type": "done", "summary_json": summary_path or ""})
 
 
+# Locust 事件注册（模块加载时即绑定；headless / web 模式均生效）
 from locust import events as _locust_events
 _locust_events.test_start.add_listener(_on_test_start)
 _locust_events.test_stop.add_listener(_on_test_stop)

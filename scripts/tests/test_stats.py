@@ -148,7 +148,7 @@ class TestReportOutput(unittest.TestCase):
             # 有失败：应含失败分布行
             md1 = os.path.join(d, "汇总.md")
             c1 = _collector_with_failures()
-            st.save_report_md(md1, script="multi_thread_record.py", protocol="dify",
+            st.save_report_md(md1, script="dify_concurrent.py", protocol="dify",
                               endpoint="http://e", model="", params=_params(),
                               wall_time=10.0, stats=c1, json_path=os.path.join(d, "summary_dify_x.json"))
             with open(md1, encoding="utf-8") as f:
@@ -165,7 +165,7 @@ class TestReportOutput(unittest.TestCase):
             md2 = os.path.join(d, "汇总2.md")
             c2 = st.StatsCollector()
             c2.record(st.REQ_NEW, True, ttfb_ms=100.0, latency_ms=1000.0, length=50)
-            st.save_report_md(md2, script="openai_compat_multi_thread_record.py",
+            st.save_report_md(md2, script="openai_compat_concurrent.py",
                               protocol="openai_compat", endpoint="http://e", model="m",
                               params=_params(), wall_time=10.0, stats=c2, json_path=None)
             with open(md2, encoding="utf-8") as f:
@@ -183,7 +183,7 @@ class TestReportOutput(unittest.TestCase):
             c.record(st.REQ_NEW, True, ttfb_ms=100.0, latency_ms=1000.0, length=50,
                      itl_ms=[10.0, 20.0, 30.0], gen_chars_per_sec=12.5)
             md = os.path.join(d, "汇总.md")
-            st.save_report_md(md, script="multi_thread_record.py", protocol="dify",
+            st.save_report_md(md, script="dify_concurrent.py", protocol="dify",
                               endpoint="http://e", model="", params=_params(),
                               wall_time=10.0, stats=c, json_path=None)
             with open(md, encoding="utf-8") as f:
@@ -201,7 +201,7 @@ class TestReportOutput(unittest.TestCase):
     def test_json_schema_and_null_metrics(self):
         with tempfile.TemporaryDirectory() as d:
             c = _collector_with_failures()
-            path = st.save_report_json(d, script="multi_thread_record.py", protocol="dify",
+            path = st.save_report_json(d, script="dify_concurrent.py", protocol="dify",
                                        endpoint="http://e", model="", params=_params(),
                                        wall_time=10.0, stats=c)
             with open(path, encoding="utf-8") as f:

@@ -124,10 +124,10 @@ class TestBaselineAllNewChat(unittest.TestCase):
 class TestBaselineArgparseDefaults(unittest.TestCase):
     """V2.2 §3.2.1：基线脚本 argparse 默认值与裸跑路径一致"""
 
-    def test_single_dialog_help_exits_zero(self):
-        """single_dialog_ttfb.py --help 正常退出且输出含 --corpus/--rounds/--output"""
+    def test_dify_baseline_help_exits_zero(self):
+        """dify_baseline.py --help 正常退出且输出含 --corpus/--rounds/--output"""
         import subprocess
-        script = os.path.join(config.PROJECT_ROOT, "scripts", "single_dialog_ttfb.py")
+        script = os.path.join(config.PROJECT_ROOT, "scripts", "dify_baseline.py")
         result = subprocess.run(
             [sys.executable, script, "--help"],
             capture_output=True, text=True, timeout=10,
@@ -139,9 +139,9 @@ class TestBaselineArgparseDefaults(unittest.TestCase):
         self.assertIn("--output", result.stdout)
 
     def test_openai_compat_help_exits_zero(self):
-        """openai_compat_dialog_ttfb.py --help 正常退出"""
+        """openai_compat_baseline.py --help 正常退出"""
         import subprocess
-        script = os.path.join(config.PROJECT_ROOT, "scripts", "openai_compat_dialog_ttfb.py")
+        script = os.path.join(config.PROJECT_ROOT, "scripts", "openai_compat_baseline.py")
         result = subprocess.run(
             [sys.executable, script, "--help"],
             capture_output=True, text=True, timeout=10,

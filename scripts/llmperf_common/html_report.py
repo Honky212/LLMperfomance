@@ -52,9 +52,13 @@ def _fmt(val, unit="", precision=1):
 
 
 def _is_baseline(script_name: str) -> bool:
-    """判断是否为基线脚本（V2.2 修订 #8：RPS 标注）"""
+    """判断是否为基线脚本（V2.2 修订 #8：RPS 标注）。
+
+    同时兼容改名前后的脚本名：新名 `*_baseline.py`，历史 summary JSON 中的旧名
+    `*_dialog_ttfb.py` 仍可正确识别。
+    """
     s = (script_name or "").lower()
-    return "dialog_ttfb" in s or "baseline" in s
+    return "baseline" in s or "dialog_ttfb" in s
 
 
 def _build_overview_cards(doc: dict) -> str:

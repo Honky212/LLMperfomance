@@ -72,6 +72,17 @@ CREATE INDEX IF NOT EXISTS idx_runs_created ON test_runs(id DESC);
 CREATE INDEX IF NOT EXISTS idx_analyses_run ON analyses(analysis_run_id);
 """
 
+# 脚本改名映射（V2.3）：历史记录中的旧脚本名 → 新名。
+# 顺序敏感：openai_compat_* 长名必须在前，否则会被后面的短名子串替换误伤。
+LEGACY_SCRIPT_RENAMES = (
+    ("openai_compat_dialog_ttfb.py", "openai_compat_baseline.py"),
+    ("openai_compat_multi_thread_record.py", "openai_compat_concurrent.py"),
+    ("openai_compat_locust_multi_dialog.py", "openai_compat_endurance_locust.py"),
+    ("single_dialog_ttfb.py", "dify_baseline.py"),
+    ("multi_thread_record.py", "dify_concurrent.py"),
+    ("locust_multi_dialog.py", "dify_endurance_locust.py"),
+)
+
 _local = threading.local()
 
 
@@ -88,6 +99,28 @@ def _get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate_legacy_script_names(conn) -> int:
+    """把历史 test_runs.script 及其内嵌 summary_json 的旧脚本名改写为新名（幂等）。
+
+    summary_json 是整段 JSON 文本，按子串替换即可（映射顺序已保证长名优先）；
+    返回 script 列被改写的行数。
+    """
+    changed = 0
+    for old, new in LEGACY_SCRIPT_RENAMES:
+        # 两种形态都要覆盖：test_runs.script 存的是注册表 key（带 scripts/ 前缀），
+        # 而 summary_json 内嵌的 script 字段是裸文件名。
+        # 映射表中 openai_compat_* 长名已排在前，故子串替换不会误伤。
+        for old_key, new_key in (("scripts/" + old, "scripts/" + new), (old, new)):
+            cur = conn.execute("UPDATE test_runs SET script=? WHERE script=?", (new_key, old_key))
+            changed += cur.rowcount
+            conn.execute(
+                "UPDATE test_runs SET summary_json=REPLACE(summary_json,?,?) "
+                "WHERE summary_json LIKE ?",
+                (old_key, new_key, "%" + old_key + "%"),
+            )
+    return changed
+
+
 def init_db():
     """建表（幂等）+ 老库增量迁移。"""
     conn = _get_conn()
@@ -102,6 +135,10 @@ def init_db():
     if "api_key" not in pcols and "api_key_enc" in pcols:
         conn.execute("ALTER TABLE config_profiles RENAME COLUMN api_key_enc TO api_key")
         logger.info("Migrated: config_profiles.api_key_enc renamed to api_key")
+    # 迁移：脚本改名（V2.3）——历史 test_runs 统一为新脚本名
+    n = _migrate_legacy_script_names(conn)
+    if n:
+        logger.info("Migrated: %d test_runs rewritten to renamed scripts", n)
     conn.commit()
 
 

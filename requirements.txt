@@ -2,7 +2,7 @@
 requests>=2.28
 locust>=2.20
 python-dotenv>=1.0
-httpx>=0.23  # openai_compat_dialog_ttfb.py / openai_compat_multi_thread_record.py 直接 import
+httpx>=0.23  # openai_compat_baseline.py / openai_compat_concurrent.py 直接 import
 
 # ===== OpenAI 兼容协议脚本（scripts/openai_compat_*.py）使用 =====
 openai>=1.0

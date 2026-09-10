@@ -320,11 +320,11 @@ docker run -d --name llmperf-panel --restart unless-stopped \
 
 ```bash
 # 单用户基线（OpenAI 兼容）
-python scripts/openai_compat_dialog_ttfb.py
+python scripts/openai_compat_baseline.py
 # 并发 20 用户
-python scripts/openai_compat_multi_thread_record.py --users 20 --threads 10 --rounds 10 --sleep 0
+python scripts/openai_compat_concurrent.py --users 20 --threads 10 --rounds 10 --sleep 0
 # Locust 耐力（30 分钟）
-LOCUST_WAIT_TIME=0 locust -f scripts/openai_compat_locust_multi_dialog.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
+LOCUST_WAIT_TIME=0 locust -f scripts/openai_compat_endurance_locust.py --headless -u 50 -r 5 -t 30m --html results/locust/report.html --csv results/locust/endurance
 ```
 
 ---
