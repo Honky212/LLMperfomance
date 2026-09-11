@@ -31,15 +31,15 @@
 
 ## 2. 获取项目代码
 
-> ⚠️ **重要提醒（针对本仓库当前状态）**：本地工作区有大量**尚未提交**的改动
-> （`web/` 整个目录、`scripts/llmperf_common/`、`scripts/tests/`、`scripts/analyze_summary.py` 等均为 untracked）。
-> 如果目标机器打算用 `git clone` 部署，请**先在本机提交并推送**这些改动，否则克隆下来的仓库会缺 Web 面板等关键部分；
-> 如果直接用文件拷贝（tar/rsync）则不受影响（会把未提交内容一并带上）。
+> ✅ **当前仓库状态**：所有改动（Web 面板、UI 美化、bug 修复等）**均已提交并推送**到
+> `https://github.com/Honky212/LLMperfomance`，可直接 `git clone` 部署，无需先在本机补提交。
+> 仅在目标机器**无法联网访问 GitHub**（内网/离线）时，才改用「方式 B」打包拷贝。
 
-### 方式 A：git clone（推荐，需先推送全部改动）
+### 方式 A：git clone（推荐，可直接克隆）
 
 ```bash
-git clone <你的仓库地址> /opt/llmperf
+# 公开仓库用 HTTPS 最简单；SSH 方式：git clone git@github.com:Honky212/LLMperfomance.git
+git clone https://github.com/Honky212/LLMperfomance.git /opt/llmperf
 cd /opt/llmperf
 ```
 
@@ -51,13 +51,14 @@ cd /opt/llmperf
 # PowerShell，在 D:\learn\LLMperfomance 下执行
 tar czf llmperf-deploy.tar.gz `
   --exclude=.git --exclude=.env --exclude=web/data `
-  --exclude=results --exclude=log --exclude='__pycache__' `
-  --exclude=.venv --exclude=.pytest_cache --exclude=corpus `
+  --exclude=results --exclude=log --exclude=dist `
+  --exclude='__pycache__' --exclude=.venv --exclude=.pytest_cache --exclude=corpus `
   .
 ```
 
 > 说明：`corpus/` 里的语料只是示例文本，可自行在目标机器补建；若想原样保留可去掉 `--exclude=corpus`。
 > `.env` 含密钥，**不随包传输**，目标机器上重新填写（见 §4）。
+> `dist/` 里是历史旧包（不含最新改动），勿直接使用，也不随新包传输。
 
 传到目标机器并解压：
 
