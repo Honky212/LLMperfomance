@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Task {{ run.run_no or ('#' ~ run.id) }} - LLM Perf Panel{% endblock %}
+{% block title %}任务 {{ run.run_no or ('#' ~ run.id) }} - LLM 性能压测平台{% endblock %}
 {% block content %}
 <h1>Task {% if run.run_no %}Run {{ run.run_no }}{% else %}#{{ run.id }}{% endif %}</h1>
 {% if run.run_no %}
@@ -14,7 +14,7 @@
   <p class="muted">任务已取消（locust 类任务被强杀，可能无汇总产物或残留部分逐用户 CSV）。</p>
   {% endif %}
   {% if run.status == 'running' %}
-  <button class="btn btn-danger" onclick="cancelTask({{ run.id }})">Cancel</button>
+  <button class="btn btn-danger" id="cancel-btn" onclick="cancelTask({{ run.id }})">Cancel</button>
   {% endif %}
 </div>
 
@@ -117,7 +117,23 @@
     badge.className = 'status-badge status-' + data.status;
     if (data.status !== 'running') {
       appendLog(`\n=== Task ${data.status} ===`);
+      // 终态收敛：隐藏 Cancel 按钮 + 补写结束时间
+      hideCancelButton();
+      refreshFinishedAt();
     }
+  }
+
+  function hideCancelButton() {
+    const btn = document.getElementById('cancel-btn');
+    if (btn) btn.remove();
+  }
+
+  function refreshFinishedAt() {
+    // SSE 的 status 事件只携带 status，不含 finished_at，终态时回查详情补齐
+    fetch(`/api/tasks/${taskId}`)
+      .then(r => r.json())
+      .then(d => { if (d && d.finished_at) finishedAt.textContent = d.finished_at; })
+      .catch(() => { /* 瞬时失败忽略 */ });
   }
 
   // 终态收敛：更新徽标、关闭 SSE、停止轮询（幂等）

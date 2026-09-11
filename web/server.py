@@ -55,7 +55,7 @@ except ImportError:
 
 # ---- 初始化 ----
 
-app = FastAPI(title="LLM Perf Panel", version="2.2")
+app = FastAPI(title="LLM 性能压测平台", version="2.2")
 WEB_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = WEB_DIR.parent
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
@@ -469,7 +469,7 @@ async def cancel_task(run_id: int):
 # ---- SSE 端点 ----
 
 @app.get("/api/tasks/{run_id}/events")
-async def task_events(run_id: int, token: str = Query(default="")):
+async def task_events(request: Request, run_id: int, token: str = Query(default="")):
     """SSE 实时进度流（V2.2 §4.6 / 附录 A）。
 
     浏览器 EventSource 不能设自定义请求头，用 ?token= 传令牌。

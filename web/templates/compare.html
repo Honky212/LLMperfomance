@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Compare Tasks - LLM Perf Panel{% endblock %}
+{% block title %}对比任务 - LLM 性能压测平台{% endblock %}
 {% block content %}
 <h1>Compare Tasks</h1>
 
@@ -102,14 +102,14 @@
       <td>TTFB p50 / p95</td>
       {% for r in runs %}
       {% set m = (r._by_type.get(req_type, {}).get('metrics', {}).get('ttfb_ms', {})) if r._by_type else {} %}
-      <td>{{ '%.0f'|format(m.p50) if m.p50 is not none else '—' }} / {{ '%.0f'|format(m.p95) if m.p95 is not none else '—' }}</td>
+      <td>{{ '%.0f'|format(m.get('p50')) if m.get('p50') is not none else '—' }} / {{ '%.0f'|format(m.get('p95')) if m.get('p95') is not none else '—' }}</td>
       {% endfor %}
     </tr>
     <tr>
       <td>Latency p50 / p95</td>
       {% for r in runs %}
       {% set m = (r._by_type.get(req_type, {}).get('metrics', {}).get('latency_ms', {})) if r._by_type else {} %}
-      <td>{{ '%.0f'|format(m.p50) if m.p50 is not none else '—' }} / {{ '%.0f'|format(m.p95) if m.p95 is not none else '—' }}</td>
+      <td>{{ '%.0f'|format(m.get('p50')) if m.get('p50') is not none else '—' }} / {{ '%.0f'|format(m.get('p95')) if m.get('p95') is not none else '—' }}</td>
       {% endfor %}
     </tr>
   </table>
