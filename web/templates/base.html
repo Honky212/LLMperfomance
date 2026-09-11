@@ -3,54 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{% block title %}LLM Perf Panel{% endblock %}</title>
-<style>
-body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-       max-width: 960px; margin: 0 auto; padding: 24px; background: #f8f9fa; color: #333; }
-nav { margin-bottom: 24px; border-bottom: 2px solid #e0e0e0; padding-bottom: 8px; }
-nav a { margin-right: 16px; text-decoration: none; color: #1a73e8; font-weight: 500; }
-nav a:hover { text-decoration: underline; }
-h1 { font-size: 20px; margin-bottom: 16px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 16px; }
-th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
-th { background: #f5f5f5; }
-.btn { display: inline-block; padding: 6px 16px; background: #1a73e8; color: #fff;
-       border: none; border-radius: 4px; cursor: pointer; font-size: 13px; text-decoration: none; }
-.btn:hover { background: #1557b0; }
-.btn-danger { background: #d93025; }
-.btn-danger:hover { background: #b3261e; }
-.muted { color: #888; font-size: 12px; }
-.status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
-                font-weight: bold; color: #fff; }
-.status-pending { background: #9e9e9e; }
-.status-running { background: #1a73e8; }
-.status-completed { background: #34a853; }
-.status-failed { background: #d93025; }
-.status-cancelled { background: #ea8600; }
-.status-orphaned { background: #7b1fa2; }
-.card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-#progress-log { font-family: monospace; font-size: 12px; background: #1e1e1e; color: #d4d4d4;
-                padding: 12px; border-radius: 4px; max-height: 400px; overflow-y: auto;
-                white-space: pre-wrap; word-break: break-all; }
-/* Token bar */
-.token-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
-             padding: 8px 12px; background: #fff3cd; border-radius: 4px; font-size: 12px; }
-.token-bar.hidden { display: none; }
-.token-bar input { flex: 1; padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px;
-                   font-family: monospace; font-size: 12px; }
-.token-bar .btn-sm { padding: 4px 10px; font-size: 11px; }
-.token-ok { background: #d4edda !important; }
-</style>
+<title>{% block title %}LLM 性能压测平台{% endblock %}</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/css/base.css">
 </head>
 <body>
-<nav>
-  <a href="/">Dashboard</a>
-  <a href="/tasks">Tasks</a>
-  <a href="/tasks/new">New Task</a>
-  <a href="/configs">Configs</a>
-  <a href="/corpora">Corpora</a>
-</nav>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⚡</span>
+    <div class="brand-text">
+      <div class="brand-name">LLM 性能压测平台</div>
+      <div class="brand-sub">Dify / OpenAI 兼容接口压测</div>
+    </div>
+  </div>
+  <nav class="nav">
+    <a href="/" data-nav="/">仪表盘</a>
+    <a href="/tasks" data-nav="/tasks">任务</a>
+    <a href="/tasks/new" class="nav-cta" data-nav="/tasks/new">＋ 新建任务</a>
+    <a href="/compare" data-nav="/compare">对比</a>
+    <a href="/configs" data-nav="/configs">配置档</a>
+    <a href="/corpora" data-nav="/corpora">语料</a>
+  </nav>
+</header>
+
+<main class="container">
 
 <!-- Token 管理条：仅在服务器启用了 WEB_TOKEN 时显示 -->
 <div id="token-bar" class="token-bar hidden">
@@ -62,6 +38,19 @@ th { background: #f5f5f5; }
 </div>
 
 {% block content %}{% endblock %}
+</main>
+
+<script>
+// 导航高亮：按当前路径匹配，无需后端注入
+(function() {
+  var path = location.pathname;
+  document.querySelectorAll('.nav a[data-nav]').forEach(function(a) {
+    var t = a.getAttribute('data-nav');
+    var hit = (t === '/') ? (path === '/') : (path === t || path.indexOf(t + '/') === 0);
+    if (hit) a.classList.add('active');
+  });
+})();
+</script>
 
 <script>
 // ---- Token 管理（localStorage 持久化）----
