@@ -24,8 +24,8 @@
     python scripts/custom_agent_concurrent.py --users 10 --threads 10 --rounds 5 \
         --cookie-file cookies.txt --sleep 0
 
-Cookie 也可来自环境变量：CUSTOM_AGENT_COOKIE / CUSTOM_AGENT_COOKIE_FILE，
-接口地址可用 CUSTOM_AGENT_URL 覆盖。
+Cookie 也可来自环境变量：CUSTOM_AGENT_COOKIE / CUSTOM_AGENT_COOKIE_FILE；
+接口地址必须通过 --url 或环境变量 CUSTOM_AGENT_URL 提供（仓库不内置真实地址）。
 """
 import argparse
 import csv
@@ -45,7 +45,9 @@ from llmperf_common.html_report import auto_post_run
 
 config.load_env()
 
-DEFAULT_URL = "https://<custom-agent-host>/bmserv/api/agent/unified/chat"
+# 接口地址不在仓库内硬编码：从 .env / 系统环境变量 CUSTOM_AGENT_URL 读取，
+# 命令行 --url 优先；两者都未提供时 main() 给出明确报错。
+DEFAULT_URL = os.environ.get("CUSTOM_AGENT_URL", "").strip()
 DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
 
@@ -330,7 +332,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="自定义智能体接口（Cookie 鉴权 / 非流式 JSON）并发压测")
     parser.add_argument("--url", default=None,
-                        help="接口地址（默认取 CUSTOM_AGENT_URL，否则用脚本内置地址）")
+                        help="接口地址（默认取 .env / 环境变量 CUSTOM_AGENT_URL；未配置时报错）")
     parser.add_argument("--cookie", default=None,
                         help="单个 Cookie，如 \"JSESSIONID=...\"（默认取 CUSTOM_AGENT_COOKIE）")
     parser.add_argument("--cookie-file", default=None,
@@ -362,7 +364,11 @@ def main(argv=None):
     if args.users < 1 or args.threads < 1 or args.rounds < 1:
         raise SystemExit("错误: --users / --threads / --rounds 必须 >= 1")
 
-    url = (args.url or os.environ.get("CUSTOM_AGENT_URL", "").strip() or DEFAULT_URL)
+    url = (args.url or DEFAULT_URL)
+    if not url:
+        raise SystemExit(
+            "错误: 未提供接口地址。请用 --url，或在 .env 中设置 CUSTOM_AGENT_URL"
+            "（示例：https://<custom-agent-host>/bmserv/api/agent/unified/chat）")
     if not url.lower().startswith(("http://", "https://")):
         raise SystemExit(f"错误: 接口地址非法: {url}")
 
