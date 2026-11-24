@@ -7,7 +7,7 @@ llmperf_common.html_report —— 单文件 HTML 可视化报告生成器（V2.2
 
 页面内容：
 1. 概览卡片：总请求 / 成功率 / RPS / TTFB 均值 / 生成速率 / 总耗时
-2. Locust 风格分组表（NewChat / ContinueChat / Aggregated）
+2. Locust 风格分组表（标准 NewChat / ContinueChat / Aggregated，外加 JSON 中的自定义分组）
 3. 失败分类饼图（fail_categories 为空则不渲染）
 4. TTFB / 整轮耗时分组柱状图（p50/p95/p99）
 5. 口径说明折叠区：三栏对照表（V2.2 §3.2.2）
@@ -22,6 +22,8 @@ import json
 import os
 import sys
 from datetime import datetime
+
+from llmperf_common.stats import ROW_ORDER
 
 
 # ECharts CDN（国内友好镜像）
@@ -92,11 +94,25 @@ def _build_overview_cards(doc: dict) -> str:
     return f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px">{items}</div>'
 
 
+def _group_names(doc: dict) -> list:
+    """分组渲染顺序：标准三组固定在前，其余自定义分组（如历史 summary 中的
+    ChatCompletions）按出现顺序追加。
+
+    口径一致性（修复 #13 配套）：stats.save_report_json 已把脚本自定义分组写进
+    by_request_type，但报告模板曾写死三个标准组，导致自定义分组的数据不可见。
+    """
+    by_type = doc.get("by_request_type", {}) or {}
+    extra = [name for name in by_type
+             if name not in ROW_ORDER
+             and (by_type[name].get("reqs", 0) or by_type[name].get("fails", 0))]
+    return list(ROW_ORDER) + extra
+
+
 def _build_group_table(doc: dict) -> str:
-    """Locust 风格分组表"""
+    """Locust 风格分组表（标准三组 + JSON 中出现的自定义分组）"""
     rows_html = ""
-    for name in ["NewChat", "ContinueChat", "Aggregated"]:
-        group = doc.get("by_request_type", {}).get(name, {})
+    for name in _group_names(doc):
+        group = (doc.get("by_request_type") or {}).get(name, {})
         m = group.get("metrics", {})
         ttfb = m.get("ttfb_ms", {})
         lat = m.get("latency_ms", {})
@@ -145,8 +161,8 @@ def _build_latency_bar(doc: dict) -> str:
     """TTFB / Latency 分组柱状图（p50/p95/p99）"""
     groups = []
     categories = []
-    for name in ["NewChat", "ContinueChat", "Aggregated"]:
-        g = doc.get("by_request_type", {}).get(name, {})
+    for name in _group_names(doc):
+        g = (doc.get("by_request_type") or {}).get(name, {})
         if g.get("reqs", 0) == 0:
             continue
         categories.append(name)
@@ -213,12 +229,20 @@ def generate_report(summary_path: str, output_path: str = None) -> str:
 
     _esc = html.escape  # 修复 #15：summary doc 派生值一律 HTML 转义后再拼接
     title = _esc(f"LLM 压测报告 - {doc.get('script', 'unknown')} ({doc.get('timestamp', '')})")
-    protocol_label = "Dify" if doc.get("protocol") == "dify" else "OpenAI 兼容"
+    protocol_label = _esc({
+        "dify": "Dify",
+        "openai_compat": "OpenAI 兼容",
+        "custom_agent": "自定义智能体",
+    }.get(doc.get("protocol"), str(doc.get("protocol") or "未标注")))
+    stream_note = ""
+    if (doc.get("params") or {}).get("streaming") is False:
+        stream_note = " | 口径: 非流式（TTFB=整轮耗时，ITL/生成速率不可测）"
     meta_info = (
         f'<div style="font-size:13px;color:#666;margin-bottom:16px">'
         f'协议: {protocol_label} | 端点: {_esc(str(doc.get("endpoint", "")))} | '
         f'模型: {_esc(str(doc.get("model", "—")))} | '
         f'生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+        f'{stream_note}'
         f'</div>'
     )
 

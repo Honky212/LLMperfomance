@@ -1,0 +1,18 @@
+
+接口地址：https://<你的服务域名>/bmserv/api/agent/unified/chat（真实地址见本地 .env 的 CUSTOM_AGENT_URL）
+调用方式：post
+请求头：
+Content-Type：application/json
+Cookie：JSESSIONID=<登录后从浏览器请求头复制，会过期；请勿提交真实值>
+请求体，raw：
+{
+  "message": "简介这次会议"
+}
+
+
+响应：
+{
+    "tableData": [],
+    "paperData": [],
+    "text": "中国教育和科研计算机网CERNET第三十二届学术年会将于2026年12月7日到10日在海南省海口市举办。本次会议主题是“聚焦十五五・支撑中国教育和科研事业高质量发展”。您可以访问CERNET年会官网 www.cernet2026.edu.cn 获取更多信息，也可以转人工或拨打4008185550咨询。"
+}

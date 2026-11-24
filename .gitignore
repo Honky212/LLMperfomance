@@ -27,3 +27,12 @@ web/data/
 # 构建产物 / 备份（部署包、git 历史备份、文档压缩包，不入库）
 dist/
 /脚本介绍.zip
+
+# 登录态 Cookie / 密钥文件（真实凭据，禁止提交）
+cookies.txt
+cookies*.txt
+*.cookie
+secrets/
+
+# 脚本运行产生的 Markdown 汇总（每次运行追加，含服务地址与实测指标，不入库）
+压测汇总.md

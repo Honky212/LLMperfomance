@@ -14,9 +14,10 @@ import script_registry as R  # noqa: E402
 
 
 class TestRegistrySchema(unittest.TestCase):
-    def test_seven_scripts_including_fake(self):
-        self.assertEqual(len(R.SCRIPT_REGISTRY), 7)
+    def test_eight_scripts_including_fake(self):
+        self.assertEqual(len(R.SCRIPT_REGISTRY), 8)
         self.assertIn("web/fake_script.py", R.SCRIPT_REGISTRY)  # P0-3
+        self.assertIn("scripts/custom_agent_concurrent.py", R.SCRIPT_REGISTRY)
         for script, schema in R.SCRIPT_REGISTRY.items():
             for key in ("label", "test_type", "protocol", "launcher", "fields"):
                 self.assertIn(key, schema, f"{script} 缺 {key}")
@@ -25,7 +26,7 @@ class TestRegistrySchema(unittest.TestCase):
 
     def test_list_scripts_shape(self):
         items = R.list_scripts()
-        self.assertEqual(len(items), 7)
+        self.assertEqual(len(items), 8)
         for it in items:
             self.assertIn("fields", it)
             for f in it["fields"]:
@@ -41,6 +42,14 @@ class TestDefaultParams(unittest.TestCase):
     def test_fake_defaults(self):
         p = R.default_params("web/fake_script.py")
         self.assertEqual(p["rounds"], 5)
+
+    def test_custom_agent_defaults(self):
+        p = R.default_params("scripts/custom_agent_concurrent.py")
+        self.assertEqual(p["users"], 5)
+        self.assertIsNone(p["url"])          # 留空 → 脚本用环境变量/内置地址
+        self.assertIsNone(p["cookie_file"])  # 留空 → 脚本用 .env 单 Cookie
+        ok, errs = R.validate_params("scripts/custom_agent_concurrent.py", p)
+        self.assertTrue(ok, errs)
 
 
 class TestValidateParams(unittest.TestCase):
@@ -137,6 +146,20 @@ class TestBuildCommand(unittest.TestCase):
         _, args, _ = R.build_command("scripts/dify_concurrent.py", params, "results/run_1")
         self.assertIn("2", args)   # 2.0 → "2"
         self.assertIn("120.5", args)
+
+    def test_custom_agent_env_and_report(self):
+        """url/cookie_file 走 env（不落 params 明文），--report 重定向 result_dir。"""
+        params = R.resolve_corpora("scripts/custom_agent_concurrent.py",
+                                   R.default_params("scripts/custom_agent_concurrent.py"))
+        params.update({"url": "http://127.0.0.1:9999/chat",
+                       "cookie_file": r"C:\secrets\cookies.txt"})
+        launcher, args, env = R.build_command("scripts/custom_agent_concurrent.py",
+                                              params, "results/run_8")
+        self.assertEqual(launcher, "python")
+        self.assertEqual(env["CUSTOM_AGENT_URL"], "http://127.0.0.1:9999/chat")
+        self.assertEqual(env["CUSTOM_AGENT_COOKIE_FILE"], r"C:\secrets\cookies.txt")
+        self.assertIn("--report", args)
+        self.assertTrue(args[args.index("--report") + 1].startswith("results/run_8"))
 
 
 if __name__ == "__main__":

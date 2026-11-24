@@ -161,6 +161,38 @@ SCRIPT_REGISTRY = {
              "min": 0, "target": "env", "env_name": "LOCUST_MAX_TURNS"},
         ],
     },
+
+
+    # ---- ⑦ 自定义智能体（Cookie 登录态 / 非流式 JSON）----
+    # Cookie 不放进 params_json（避免明文落库/展示）：单 Cookie 用 .env 的
+    # CUSTOM_AGENT_COOKIE；多用户并发用 cookie_file（仅记录路径）指向绝对路径文件。
+    "scripts/custom_agent_concurrent.py": {
+        "label": "Concurrent - 自定义智能体（Cookie/非流式）",
+        "test_type": "concurrent",
+        "protocol": "any",
+        "launcher": "python",
+        "report_to_result_dir": True,
+        "fields": [
+            {"key": "url", "kind": "text", "label": "接口地址（留空=环境变量/内置）",
+             "default": None, "target": "env", "env_name": "CUSTOM_AGENT_URL",
+             "hint": "如 https://host/bmserv/api/agent/unified/chat"},
+            {"key": "cookie_file", "kind": "text", "label": "Cookie 文件（留空=用 .env 单 Cookie）",
+             "default": None, "target": "env", "env_name": "CUSTOM_AGENT_COOKIE_FILE",
+             "hint": "绝对路径，每行一个 Cookie；多用户并发时每个用户一份登录会话"},
+            {"key": "corpus", "kind": "corpus", "label": "语料", "default": "corpus/test1.txt",
+             "target": "cli", "flag": "--corpus"},
+            {"key": "users", "kind": "int", "label": "用户总数", "default": 5,
+             "min": 1, "target": "cli", "flag": "--users"},
+            {"key": "threads", "kind": "int", "label": "并发线程数", "default": 5,
+             "min": 1, "target": "cli", "flag": "--threads"},
+            {"key": "rounds", "kind": "int", "label": "每人轮数", "default": 10,
+             "min": 1, "target": "cli", "flag": "--rounds"},
+            {"key": "sleep", "kind": "float", "label": "思考时间(s)", "default": 1.0,
+             "min": 0, "target": "cli", "flag": "--sleep"},
+            {"key": "timeout", "kind": "float", "label": "单请求超时(s)", "default": 120.0,
+             "min": 1, "target": "cli", "flag": "--timeout"},
+        ],
+    },
 }
 
 

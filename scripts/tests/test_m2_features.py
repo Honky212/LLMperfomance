@@ -126,17 +126,52 @@ class TestHtmlReportGeneration(unittest.TestCase):
                 os.unlink(html_path)
 
     def test_existing_summaries_generate(self):
-        """存量 3 份 summary JSON 均可生成 HTML（回填验证）"""
+        """存量 summary JSON 均可生成 HTML（回填验证）
+
+        产物分布约定：面板任务写 results/run_<run_no>/summary_*.json，脚本裸跑写
+        results/summary_*.json，因此这里递归收集；仓库干净（results/ 无产物）时跳过，
+        避免测试隐含"本机跑过压测"的前置依赖。
+        """
         results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "results")
-        summaries = [f for f in os.listdir(results_dir) if f.startswith("summary_") and f.endswith(".json")]
-        self.assertGreaterEqual(len(summaries), 3, "应至少有 3 份存量 summary JSON")
-        for name in summaries[:3]:
-            path = os.path.join(results_dir, name)
+        summaries = []
+        for root, _dirs, files in os.walk(results_dir):
+            for f in sorted(files):
+                if f.startswith("summary_") and f.endswith(".json"):
+                    summaries.append(os.path.join(root, f))
+        if len(summaries) < 3:
+            self.skipTest(f"存量 summary JSON 不足 3 份（实际 {len(summaries)}），跳过回填验证")
+        for path in summaries[:3]:
+            name = os.path.basename(path)
             html_path = html_report.generate_report(path)
             self.assertTrue(os.path.isfile(html_path), f"{name} 应生成 HTML")
             size = os.path.getsize(html_path)
             self.assertGreater(size, 1000, f"{name} HTML 应 >1KB")
             os.unlink(html_path)
+
+    def test_custom_group_rendered(self):
+        """自定义请求分组（历史 OpenAI Locust 的 ChatCompletions）也进分组表/柱状图"""
+        doc = _make_summary()
+        doc["by_request_type"]["ChatCompletions"] = {
+            "reqs": 4, "fails": 1, "metrics": {
+                "ttfb_ms": {"avg": 700, "p50": 680, "p95": 900, "p99": 950, "min": 600, "max": 1000},
+                "latency_ms": {"avg": 3000, "p50": 2900, "p95": 3600, "p99": 3800, "min": 2500, "max": 4000},
+                "itl_ms": {"avg": 60, "p50": 55, "p95": 90, "p99": 110, "min": 30, "max": 120},
+                "gen_chars_per_sec": {"avg": 25, "p50": 24},
+                "response_length": {"avg": 480, "p50": 470, "p95": 700, "max": 800},
+            },
+        }
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False, encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False)
+            json_path = f.name
+        try:
+            html_path = html_report.generate_report(json_path)
+            with open(html_path, "r", encoding="utf-8") as hf:
+                content = hf.read()
+            self.assertIn("ChatCompletions", content)
+        finally:
+            os.unlink(json_path)
+            if os.path.exists(html_path):
+                os.unlink(html_path)
 
 
 class TestRuleEngine(unittest.TestCase):

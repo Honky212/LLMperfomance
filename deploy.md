@@ -145,7 +145,8 @@ python -m unittest discover -s scripts/tests -t scripts -v
 
 ```bash
 FAKE_ROUNDS=3 python web/fake_script.py
-# 期望输出 3 行 LLMPERF_PROGRESS round_done 并在当前目录生成 summary_fake_*.json
+# 期望输出 3 行 LLMPERF_PROGRESS round_done，并在当前目录生成
+# summary_fake_*.json + 同名 .html 报告（LLMPERF_HTML_REPORT=0 可只出 JSON）
 ```
 
 ### 5.3 启动 Web 面板（前台方式，先确认能起来）

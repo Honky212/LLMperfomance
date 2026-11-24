@@ -169,10 +169,17 @@ class ChatUser(HttpUser):
     def init_conversation(self):
         """开启新会话任务：仅模拟"用户新开一个会话"的请求负载。
         此处产生的 conversation_id 不做保存——multi_round_chat 任务每次都会自行
-        新建会话，保存它不会被任何后续逻辑消费（原有赋值为死代码，已移除）"""
-        result, _ = self.chat("你是谁", "", "NewChat")
+        新建会话，保存它不会被任何后续逻辑消费（原有赋值为死代码，已移除）。
+
+        口径一致性：题目同样取自轮换语料（原硬编码"你是谁"会与 OpenAI 版
+        init_conversation 及并发脚本的语料口径不一致，且所有用户同时问同一句）。
+        """
+        if not self.test_prompt:
+            return
+        q = self.next_question()
+        result, _ = self.chat(q, "", "NewChat")
         if result:
-            self.save_to_csv("你是谁", result)
+            self.save_to_csv(q, result)
 
     def chat(self, query, conversation_id, name):
         """发送一轮对话，返回 (result, elapsed_ms)；失败时 result 为 None"""

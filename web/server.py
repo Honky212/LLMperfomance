@@ -8,6 +8,7 @@ web.server —— FastAPI 应用（V2.2 §4.6）
 127.0.0.1）必须设置 WEB_TOKEN，否则所有 POST/DELETE 写接口无鉴权开放。
 """
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -59,6 +60,25 @@ app = FastAPI(title="LLM 性能压测平台", version="2.2")
 WEB_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = WEB_DIR.parent
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
+
+# Starlette 1.x 将 TemplateResponse 改为 request 在前：
+#   新: TemplateResponse(request, name, context)
+#   旧: TemplateResponse(name, context)（request 放 context）
+# 用签名探测做双向兼容，避免 requirements-web.txt 未锁版本时首页直接 500。
+_TEMPLATE_REQUEST_FIRST = "request" in inspect.signature(
+    templates.TemplateResponse).parameters
+
+
+def render_template(request: Request, name: str, context: dict | None = None,
+                    **kwargs) -> HTMLResponse:
+    """渲染模板，兼容 Starlette 新旧 TemplateResponse 签名。"""
+    ctx = {"request": request}
+    if context:
+        ctx.update(context)
+    if _TEMPLATE_REQUEST_FIRST:
+        return templates.TemplateResponse(request, name, ctx, **kwargs)
+    return templates.TemplateResponse(name, ctx, **kwargs)
+
 
 # 静态文件（echarts.min.js 等）
 static_dir = WEB_DIR / "static"
@@ -115,13 +135,13 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     runs = db.list_test_runs(limit=10)
-    return templates.TemplateResponse("index.html", {"request": request, "runs": runs})
+    return render_template(request, "index.html", {"runs": runs})
 
 
 @app.get("/tasks", response_class=HTMLResponse)
 async def tasks_page(request: Request):
     runs = db.list_test_runs(limit=50)
-    return templates.TemplateResponse("tasks.html", {"request": request, "runs": runs})
+    return render_template(request, "tasks.html", {"runs": runs})
 
 
 @app.get("/tasks/new", response_class=HTMLResponse)
@@ -129,13 +149,13 @@ async def new_task_page(request: Request):
     # V2.0 §7.1：模板仅需 id/name/protocol（不含 api_key 等字段）
     profiles = db.list_profiles()
     slim = [{"id": p["id"], "name": p["name"], "protocol": p["protocol"]} for p in profiles]
-    return templates.TemplateResponse("new_task.html", {"request": request, "profiles": slim})
+    return render_template(request, "new_task.html", {"profiles": slim})
 
 
 @app.get("/corpora", response_class=HTMLResponse)
 async def corpora_page(request: Request):
     """语料管理页（Web 优化 V2.0 §7.2）。"""
-    return templates.TemplateResponse("corpora.html", {"request": request})
+    return render_template(request, "corpora.html")
 
 
 @app.get("/tasks/{run_id}", response_class=HTMLResponse)
@@ -153,15 +173,15 @@ async def task_detail_page(request: Request, run_id: int):
                 a["_findings"] = json.loads(a["findings_json"])
             except json.JSONDecodeError:
                 a["_findings"] = None
-    return templates.TemplateResponse("task_detail.html", {
-        "request": request, "run": run, "analyses": analyses,
+    return render_template(request, "task_detail.html", {
+        "run": run, "analyses": analyses,
     })
 
 
 @app.get("/configs", response_class=HTMLResponse)
 async def configs_page(request: Request):
     profiles = db.list_profiles()
-    return templates.TemplateResponse("configs.html", {"request": request, "profiles": profiles})
+    return render_template(request, "configs.html", {"profiles": profiles})
 
 
 # ---- REST API ----
@@ -171,7 +191,7 @@ async def create_task(body: dict):
     """提交任务：{script, test_type?, params?, profile_id?}（Web 优化 V2.0 §5.1）
 
     校验与推导：
-    - script 必须在注册表内（7 项含 fake，P0-3）；
+    - script 必须在注册表内（8 项含 fake，P0-3）；
     - 脚本协议与 profile 协议一致（P1-4），否则 422；
     - test_type 一律以注册表推导值为准落库，客户端冲突值忽略并告警（P2-9）；
     - params 与注册表默认值合并并做类型/范围/格式校验（P2-7），非法 422；
@@ -613,7 +633,7 @@ async def api_delete_config(profile_id: int):
 
 @app.get("/api/scripts")
 async def api_list_scripts():
-    """注册表脚本列表（7 项：fake + 6 真实），前端据此动态渲染参数表单。"""
+    """注册表脚本列表（8 项：fake + 7 真实），前端据此动态渲染参数表单。"""
     return script_registry.list_scripts()
 
 
@@ -721,15 +741,15 @@ async def compare_page(request: Request, ids: list[str] = Query(default=[])):
     all_runs = db.list_test_runs(limit=100)
     raw_ids = ",".join(ids).strip()
     if not raw_ids:
-        return templates.TemplateResponse("compare.html", {
-            "request": request, "runs": [], "all_runs": all_runs, "error": None,
+        return render_template(request, "compare.html", {
+            "runs": [], "all_runs": all_runs, "error": None,
         })
 
     try:
         id_list = [int(x.strip()) for x in raw_ids.split(",") if x.strip()]
     except ValueError:
-        return templates.TemplateResponse("compare.html", {
-            "request": request, "runs": [], "all_runs": all_runs,
+        return render_template(request, "compare.html", {
+            "runs": [], "all_runs": all_runs,
             "error": "Invalid ids parameter",
         })
 
@@ -753,8 +773,17 @@ async def compare_page(request: Request, ids: list[str] = Query(default=[])):
         run["_fail_cats"] = doc.get("fail_categories", {})
         runs.append(run)
 
-    return templates.TemplateResponse("compare.html", {
-        "request": request, "runs": runs, "all_runs": all_runs, "error": None,
+    # 分组并集（口径一致性）：标准三组固定在前，历史/自定义分组（如旧版 OpenAI
+    # Locust summary 里的 ChatCompletions）追加在后，避免模板写死导致数据不可见。
+    group_names = ["NewChat", "ContinueChat", "Aggregated"]
+    for r in runs:
+        for name in (r["_by_type"] or {}):
+            if name not in group_names:
+                group_names.append(name)
+
+    return render_template(request, "compare.html", {
+        "runs": runs, "all_runs": all_runs, "error": None,
+        "group_names": group_names,
     })
 
 

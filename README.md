@@ -40,7 +40,7 @@ LLMperfomance/
 ├── scripts/                 # 核心测试脚本（见下方说明）
 │   ├── llmperf_common/      # 公共模块（config / sse / stats，仅标准库，零第三方依赖）
 │   ├── tests/               # 离线单测（unittest：test_sse.py / test_stats.py）
-│   └── *.py                 # 6 个测试脚本（Dify 风格 + OpenAI 兼容孪生）
+│   └── *.py                 # 测试脚本（Dify / OpenAI 孪生 + 自定义智能体）
 └── results/                 # 测试输出（各脚本运行产出）
     ├── summary_*.json       # 多线程脚本的机器可读汇总（schema v1，见"测试输出说明"）
     └── locust/              # Locust 脚本的逐用户 CSV 与 --html/--csv 报告
@@ -68,21 +68,41 @@ Copy-Item .env.example .env
 | `MODEL_NAME` | 模型 ID：渠道中配置的模型名 | 所有 OpenAI 兼容接口脚本 |
 | `OPENAI_MAX_TOKENS` | 最大输出 token 数（0 = 不限制） | openai_compat_baseline.py、openai_compat_endurance_locust.py |
 | `VERIFY_SSL` | 是否校验 TLS 证书；设置为 `false` 时仅在本地自签名环境下临时关闭校验 | 所有脚本 |
+| `CUSTOM_AGENT_URL` | 自定义智能体接口地址（留空用脚本内置地址） | custom_agent_concurrent.py |
+| `CUSTOM_AGENT_COOKIE` | 浏览器登录态 Cookie（如 `JSESSIONID=...`），有效期有限 | custom_agent_concurrent.py |
+| `CUSTOM_AGENT_COOKIE_FILE` | Cookie 文件绝对路径（每行一个，支持 `别名<TAB>Cookie`） | custom_agent_concurrent.py 多用户并发 |
 
 ## Web 面板（web/，可选）
 
 基于 FastAPI + SQLite 的单进程管理面板（Jinja2 页面 + REST API + SSE 实时进度），
-为 6+1 个脚本提供图形化任务提交、语料上传、结果查看与诊断：
+为 7+1 个脚本提供图形化任务提交、语料上传、结果查看与诊断：
 
 ```powershell
 pip install -r requirements-web.txt   # fastapi / uvicorn / jinja2 等（面板依赖）
 python web/server.py                  # 默认 http://127.0.0.1:8686
 ```
 
+> **启动报 `ModuleNotFoundError: No module named 'fastapi'`**：说明面板依赖还没安装，
+> 执行 `python -m pip install -r requirements-web.txt` 即可（同时会补齐 uvicorn、jinja2、
+> python-multipart、cryptography、httpx）。若使用虚拟环境，请先激活再安装并启动，
+> 确保 `python web/server.py` 拉起的压测子进程也使用同一解释器。
+
+使用项目内 `.venv` 时：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-web.txt
+python web\server.py
+```
+
+> PowerShell 若禁止运行激活脚本，可临时执行
+> `Set-ExecutionPolicy -Scope Process Bypass`，或直接用
+> `.\.venv\Scripts\python.exe web\server.py` 启动。
+
 - 配置档（Configs）保存于 `web/data/llmperf.db`（SQLite）：**API Key 为本地明文存储**，
   仅建议本机/内网使用；`web/data/` 已加入 `.gitignore`，禁止提交；
 - 脚本注册表（`web/script_registry.py`）是单一事实来源：驱动前端参数表单渲染，
-  并集中完成参数 → 命令行/环境变量翻译，6+1 个脚本均在列；
+  并集中完成参数 → 命令行/环境变量翻译，7+1 个脚本均在列；
 - 执行器为单队列串行：同一时间仅允许一个压测任务，存在 running/pending 任务时
   新提交返回 409（避免并发压测互相污染指标）。
 
@@ -188,6 +208,170 @@ locust -f scripts/openai_compat_endurance_locust.py --headless -u 50 -r 5 -t 30m
 - 找崩溃临界点的判断方法：观察周期性统计中 `ChatCompletions-TTFB` / `ChatCompletions-Total`
   的中位数和高分位是否随时间持续抬升（逐渐变慢），以及 `# fails` 是否开始增长（崩溃/超时）
 
+### 7. `scripts/custom_agent_concurrent.py` —— 自定义智能体（Cookie 登录态 / 非流式 JSON）
+
+适配 `docs/自定义智能体接口.txt` 这类接口：`POST` JSON `{"message": "..."}`，请求头带
+浏览器登录态 Cookie（如 `JSESSIONID=...`），响应为 `{"tableData": [], "paperData": [], "text": "..."}`。
+现有 Dify / OpenAI 兼容脚本的请求体、响应解析和鉴权方式都不匹配，因此单独提供本脚本，
+只复用 `llmperf_common` 的统计与报告能力。
+
+#### 7.1 接口特点与限制
+
+- **鉴权是 Cookie 而非 API Key**：默认从 `--cookie` / `.env` 的 `CUSTOM_AGENT_COOKIE` 读取；
+  多用户并发用 `--cookie-file`（每行一个，支持 `别名<TAB>Cookie`），每个用户绑定独立登录会话
+- **非流式接口拿不到首 token 时刻**：`ttfb_ms` 与整轮耗时相同，ITL / 生成速率不可测；
+  summary JSON 带 `params.streaming=false`，HTML 报告标题栏会标注该口径
+- **成功判定**：HTTP 200 且响应是 JSON，并且 `text` 非空，或 `tableData` / `paperData`
+  至少一个非空（只返回表格、`text` 为空也算成功）
+- **失败分类**：`timeout`、`connection_error`、`http_error`（含 401/403）、`parse_error`
+  （返回登录页 HTML / 非 JSON）、`incomplete_answer`（内容为空或短于 `--min-answer-len`）
+- 每个模拟用户一个 CSV，含 HTTP 状态、`tableData/paperData` 条数、失败分类；
+  401/403 通常意味着 Cookie 已过期，需要重新登录获取
+
+#### 7.2 准备登录 Cookie
+
+1. 浏览器正常登录智能体页面；
+2. F12 → **Network** → 触发一次对话 → 找到 `.../agent/unified/chat` 请求；
+3. 在 **Request Headers** 中复制完整 `Cookie` 值，例如
+   `JSESSIONID=<你的会话ID>`；有多个 Cookie 时全部复制
+   （`JSESSIONID=...; theme=dark`）。
+
+在项目根 `.env` 中配置（推荐，避免 Cookie 出现在命令历史/进程列表）：
+
+```dotenv
+CUSTOM_AGENT_URL=https://<custom-agent-host>/bmserv/api/agent/unified/chat
+CUSTOM_AGENT_COOKIE=JSESSIONID=...
+# 多用户并发：Cookie 文件绝对路径（每行一个登录会话）
+# CUSTOM_AGENT_COOKIE_FILE=C:\secrets\cookies.txt
+```
+
+> Cookie 是登录态，会过期；不要提交到 Git。命令行也可用 `--cookie "JSESSIONID=..."`，
+> 但仅适合临时调试。若接口还校验 `Referer` / `Origin` / CSRF，用 `--header` 追加。
+
+#### 7.3 单用户冒烟（先跑通）
+
+```powershell
+python scripts/custom_agent_concurrent.py `
+    --users 1 --threads 1 --rounds 3 `
+    --corpus corpus/test1.txt
+```
+
+- 不传 `--cookie` 时读取 `.env` 的 `CUSTOM_AGENT_COOKIE`；
+- 不传 `--url` 时读取 `.env` 的 `CUSTOM_AGENT_URL`，再缺省用脚本内置地址；
+- 不传 `--corpus` 时默认 `corpus/test1.txt`；
+- 先确认输出中 `成功: 3 | 失败: 0`，再逐步加并发。
+
+#### 7.4 多用户并发
+
+准备 `C:\secrets\cookies.txt`，每行一个**独立登录会话**（不要重复用同一个 Cookie）：
+
+```text
+# 别名<TAB>Cookie（推荐，别名会写进 CSV 的 cookie_tag 列）
+alice	JSESSIONID=...
+bob	JSESSIONID=...
+# 也可以只写 Cookie，脚本自动命名 user_<行号>
+JSESSIONID=...
+```
+
+> 上面 `alice` 和 `JSESSIONID` 之间是**真实的 Tab 字符**；如果编辑器把 Tab 转成了空格，
+> 也支持 `alice JSESSIONID=...` 的写法。
+
+```powershell
+# 10 个用户、10 个并发线程、每个用户连续问 5 轮、无思考间隔
+python scripts/custom_agent_concurrent.py `
+    --users 10 --threads 10 --rounds 5 --sleep 0 `
+    --cookie-file C:\secrets\cookies.txt `
+    --corpus corpus/test1.txt
+```
+
+- `--users` 是模拟用户数，`--threads` 是并发工作线程数（会被自动限制为不超过 users）；
+- 每个用户按 `cookies[i % N]` 取 Cookie：**Cookie 数少于用户数时会循环共享**，
+  脚本会打印醒目警告；
+- 同一个用户的多轮请求是串行的（模拟真实会话），不同用户之间才并发；
+- 建议梯度：先 `--users 1`，再 `5`，再 `10`，观察成功率、P95/P99 延迟和 401/超时是否突增。
+
+#### 7.5 单 Cookie 并发的限制
+
+只有一个 `JSESSIONID` 时，脚本**可以**发出多个并发请求，但这通常不是有效的容量测试：
+
+- 所有请求在服务端属于**同一个 HttpSession**，对话历史/上下文会互相污染；
+- 很多 Java Web 应用会对同一 Session 的请求加锁或串行化，你测到的是“单会话排队”，
+  不是服务器真实并发能力；
+- 若业务按 `userId` 而不是 Session 隔离，即使拿到多个 `JSESSIONID`，同一账号仍可能共享上下文。
+
+快速判断方法：会话 A 先让智能体“记住数字 111”，会话 B 让它“记住数字 222”，
+再回到 A 问“刚才的数字是多少”。若 A 答出 222，说明上下文是共享的，单 Cookie 并发结果不可信。
+
+真实并发容量测试应准备**多个账号的独立登录会话**（或让服务端提供 API Token/OAuth），
+一行一个写入 `--cookie-file`。同一账号多开浏览器通常只能得到多个 Session ID，
+不一定能隔离业务上下文。
+
+#### 7.6 常用参数
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--url` | `.env` / 内置地址 | 接口地址，需以 `http://` 或 `https://` 开头 |
+| `--cookie` | `.env` 的 `CUSTOM_AGENT_COOKIE` | 单个 Cookie，如 `JSESSIONID=...` |
+| `--cookie-file` | `.env` 的 `CUSTOM_AGENT_COOKIE_FILE` | 多用户 Cookie 文件；与 `--cookie` 可同时使用 |
+| `--corpus` | `corpus/test1.txt` | 每行一个问题；轮数超过行数时自动截断 |
+| `--users` | `5` | 模拟用户数 |
+| `--threads` | `5` | 并发线程数 |
+| `--rounds` | `10` | 每个用户的轮数 |
+| `--sleep` | `1.0` | 每轮思考间隔（秒）；压容量时设 `0` |
+| `--timeout` | `120` | 单请求读取超时（秒） |
+| `--message-field` | `message` | 请求体中的问题字段名 |
+| `--answer-field` | `text` | 响应体中的回答字段名 |
+| `--min-answer-len` | `0` | 回答最小长度；`0` = 只要求 text/tableData/paperData 非全空 |
+| `--user-agent` | requests 默认 | 自定义 UA；服务端按 UA 绑定会话时使用 |
+| `--header` | 无 | 追加请求头，可重复，如 `--header "Referer: https://..."` |
+| `--insecure` | 关闭 | 跳过 HTTPS 证书校验，仅限自签名环境 |
+| `--report` | 项目根 `压测汇总.md` | Markdown 汇总输出路径 |
+
+#### 7.7 输出文件与指标
+
+```text
+results/custom_agent_chat_responses_user_001.csv   # 每个用户一个
+results/summary_custom_<时间戳>.json               # 机读汇总
+results/summary_custom_<时间戳>.html               # 可视化报告
+压测汇总.md                                        # 可用 --report 指定
+```
+
+CSV 列（按顺序）：`timestamp`、`user_id`、`cookie_tag`、`round`、`req_type`、`http_status`、
+`ok`、`question`、`answer`、`ttfb_ms`、`response_time_ms`、`response_length`、`tables`、
+`papers`、`fail_category`、`fail_reason`。
+
+- `req_type`：用户第 1 轮记为 `NewChat`，后续轮记为 `ContinueChat`；
+- `tables` / `papers`：`tableData` / `paperData` 的条数；
+- **非流式**：`ttfb_ms == response_time_ms`，只能看整轮延迟；ITL/生成速率不可测；
+- summary JSON 的 `params` 含 `auth="cookie"`、`streaming=false`、`cookie_sessions=N`，
+  HTML 报告会显示“非流式（TTFB=整轮耗时）”提示；
+- 401/403 多为 Cookie 过期；返回登录页 HTML 会记为 `parse_error` 并提示检查 Cookie。
+
+#### 7.8 在 Web 面板中使用
+
+先安装面板依赖（与脚本共用同一 Python 环境）：
+
+```powershell
+pip install -r requirements-web.txt
+python web/server.py          # 默认 http://127.0.0.1:8686
+```
+
+> 若启动时报 `ModuleNotFoundError: No module named 'fastapi'`，就是这一条依赖没装：
+> `python -m pip install -r requirements-web.txt`。若使用虚拟环境，请先激活，
+> 并确保面板进程与压测子进程用的是同一个解释器。
+
+1. `.env` 配置 `CUSTOM_AGENT_COOKIE`（单 Cookie），或准备 Cookie 文件（多用户）；
+2. 新建任务 → 选择 `Concurrent - 自定义智能体（Cookie/非流式）`；
+3. “接口地址”可留空（用 `.env`/内置地址）；多用户并发在“Cookie 文件”填**绝对路径**；
+4. 设置 users / threads / rounds / sleep 后提交。
+
+面板只会把 `url` / `cookie_file` 写入任务参数，**不会保存 Cookie 本身**；
+Cookie 通过环境变量或文件在执行时读取。修改 `.env` 后需重启面板，修改 Cookie 文件内容则无需重启。
+面板同一时间只执行一个压测任务（其余任务排队），避免多个压测互相污染指标。
+
+> ⚠️ 同一 Cookie 被多个模拟用户共享时，服务端会话上下文会互相污染，且可能被服务端
+> 按会话串行化；脚本会打印醒目警告。真实并发容量测试请准备多个登录会话。
+
 > 注：早期 CERAI 测试曾附带一个日志转 CSV 的小工具（`testCERAI/数据/logTOtxtTOcsv.py`），
 > 已随去重清理与历史重建移出仓库。
 
@@ -198,7 +382,6 @@ locust -f scripts/openai_compat_endurance_locust.py --headless -u 50 -r 5 -t 30m
 | `short10words.txt` ~ `long3000words.txt` | 10 / 100 / 300 / 500 / 1000 / 2000 / 3000 字分档长文本，用于"输入长度 × 并发数"矩阵测试 |
 | `test1.txt` | 逐行短问题集（OpenAI 兼容 Locust 脚本默认语料） |
 | `test2.txt` | 逐行短问题集（`openai_compat_concurrent.py` 默认语料；长文本输入测试请用上方 `long*words.txt` 分档语料） |
-| `50QA-1.txt` / `50QA-2.txt` | 问答式问题集（各 50 条；仓库当前未包含，Dify 脚本默认语料已改用 `test1.txt`） |
 
 ## 测试输出说明（results/）
 
@@ -232,7 +415,7 @@ locust -f scripts/openai_compat_endurance_locust.py --headless -u 50 -r 5 -t 30m
 
 ## 公共模块（scripts/llmperf_common/）
 
-6 个测试脚本的配置加载、SSE 解析、失败分类与统计/报告输出均收敛到公共模块（仅标准库）：
+各测试脚本的配置加载、SSE 解析、失败分类与统计/报告输出均收敛到公共模块（仅标准库）：
 
 | 模块 | 职责 |
 |---|---|

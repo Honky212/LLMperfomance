@@ -35,6 +35,7 @@ FAIL_CATEGORIES = {
 _PROTOCOL_DESC = {
     "dify": "Dify 风格 `/v1/chat-messages`（conversation_id 多轮）",
     "openai_compat": "OpenAI 兼容 `/chat/completions`（messages 多轮）",
+    "custom_agent": "自定义智能体（Cookie 登录态 / 非流式 JSON）",
 }
 
 
@@ -266,8 +267,8 @@ def save_report_md(report_path, *, script, protocol, endpoint, model, params,
         lines += [
             "# 压测汇总",
             "",
-            "> 由 `scripts/dify_concurrent.py` 与 `scripts/openai_compat_concurrent.py` "
-            "经 `llmperf_common/stats.py` 统一生成，每次运行追加一条记录。",
+            "> 由 `scripts/` 下各压测脚本经 `llmperf_common/stats.py` 统一生成，"
+            "每次运行追加一条记录。",
             "",
         ]
     lines += [
@@ -321,13 +322,16 @@ def save_report_md(report_path, *, script, protocol, endpoint, model, params,
 
 def save_report_json(output_dir, *, script, protocol, endpoint, model, params,
                      wall_time, stats):
-    """写出 results/summary_<dify|openai>_<yyyyMMdd_HHmmss>.json，返回文件绝对路径。
+    """写出 results/summary_<dify|openai|custom>_<yyyyMMdd_HHmmss>.json，返回文件绝对路径。
 
-    schema v1（见方案 5.3）；无样本指标为 null；protocol 标签 dify / openai_compat。
+    schema v1（见方案 5.3）；无样本指标为 null；protocol 标签 dify / openai_compat /
+    custom_agent（分别对应文件名 dify / openai / custom）。
     """
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    tag = "openai" if protocol == "openai_compat" else "dify"
+    # 文件名沿用既有 dify/openai 标签；新增协议用自身标签，避免误标成 Dify
+    tag = {"dify": "dify", "openai_compat": "openai", "custom_agent": "custom"}.get(
+        protocol, protocol or "dify")
     path = os.path.join(output_dir, f"summary_{tag}_{ts}.json")
 
     agg = stats.row(REQ_AGGREGATED)

@@ -5,18 +5,27 @@
 1. 发 progress.start
 2. 循环 N 轮（默认 5），每轮 sleep 0.3s 后发 progress.round_done
 3. 写出伪造 summary JSON 到 LLMPERF_OUTPUT_DIR（或当前目录）
-4. 发 progress.done
+4. 调 auto_post_run() 生成 HTML 报告（真实脚本同款收尾，面板才能展示报告）
+5. 发 progress.done
 
 支持环境变量：
   FAKE_ROUNDS=N        轮数（默认 5）
   FAKE_FAIL_AT=N       第 N 轮发 error 并退出（模拟失败）
   FAKE_HANG=1          发 start 后无限 sleep（模拟取消场景）
   LLMPERF_OUTPUT_DIR   输出目录
+  LLMPERF_HTML_REPORT  0 = 不生成 HTML（默认 1）
+  LLMPERF_ANALYSIS     1 = 额外生成规则诊断 MD（默认 0）
 """
 import json
 import os
 import sys
 import time
+
+# 与真实压测脚本共用同一个收尾钩子（scripts/ 在 sys.path 才能 import llmperf_common）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "scripts"))
+
+from llmperf_common.html_report import auto_post_run  # noqa: E402
 
 
 def emit(event):
@@ -111,6 +120,9 @@ def main():
     summary_path = os.path.join(output_dir, f"summary_fake_{ts}.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
+
+    # 与真实脚本一致的收尾：HTML 报告（+/规则诊断），受 LLMPERF_HTML_REPORT / LLMPERF_ANALYSIS 控制
+    auto_post_run(summary_path)
 
     emit({"type": "done", "summary_json": summary_path})
     print(f"[fake] Done. Summary: {summary_path}")

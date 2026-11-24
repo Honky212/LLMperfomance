@@ -184,6 +184,9 @@ class OpenAICompatChatUser(HttpUser):
         """发送一轮对话，成功返回 {"answer", "ttfb_ms", "elapsed_ms"}，失败返回 None"""
         if not question:
             return None
+        # 分组口径（与 dify_endurance_locust / concurrent 脚本对齐）：无历史 → NewChat，
+        # 携带历史 → ContinueChat。Locust 原生统计行名仍为 ChatCompletions-TTFB/Total。
+        req_type = perf_stats.REQ_NEW if not self.messages else perf_stats.REQ_CONTINUE
         start_time = time.time()
         payload = {
             "model": self.model,
@@ -209,17 +212,17 @@ class OpenAICompatChatUser(HttpUser):
                     name="ChatCompletions-TTFB",
                     timeout=self.request_timeout
             ) as response:
-                result, sr = self.handle_stream_response(response, start_time)
+                result, sr = self.handle_stream_response(response, start_time, req_type)
         except Exception as e:
             # 请求建立阶段异常（response 尚未拿到，handle_stream_response 不会执行）：
             # 归类并上报失败（修订 A；勿重复包装流内异常——流内异常由解析器/既有 except 分支处理）
             sr = sse.failed_result(perf_stats.classify_exception(e), str(e)[:200],
                                    start_time=start_time)
-            _COLLECTOR.record("ChatCompletions", False, ttfb_ms=0.0,
+            _COLLECTOR.record(req_type, False, ttfb_ms=0.0,
                               latency_ms=sr.elapsed_ms, length=0,
                               fail_category=sr.fail_category)
             progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                           "ok": False, "req_type": "ChatCompletions", "ttfb_ms": 0.0,
+                           "ok": False, "req_type": req_type, "ttfb_ms": 0.0,
                            "elapsed_ms": round(sr.elapsed_ms, 2)})
             result = None
 
@@ -243,8 +246,12 @@ class OpenAICompatChatUser(HttpUser):
             self.save_to_csv(question, result)
         return result
 
-    def handle_stream_response(self, response, start_time):
-        """处理 OpenAI SSE 流式响应，返回 (result, sr)；失败时 result 为 None（P3 起由 sse 统一解析）"""
+    def handle_stream_response(self, response, start_time, req_type):
+        """处理 OpenAI SSE 流式响应，返回 (result, sr)；失败时 result 为 None（P3 起由 sse 统一解析）
+
+        req_type: 请求类型统计名（NewChat / ContinueChat，由 chat_once 传入），
+        保证 summary JSON 的分组口径与 Dify 版及其他脚本一致。
+        """
         if response.status_code != 200:
             # Locust safe-mode：连接失败返回 status_code=0 且带 .error 的 LocustResponse（不抛异常），
             # 需按其 error 归类为 connection_error/timeout；真实 HTTP 非 200 才归 http_error（修订 A 实证）
@@ -260,11 +267,11 @@ class OpenAICompatChatUser(HttpUser):
                 sr = sse.failed_result("http_error", reason, start_time=start_time)
             # 修复 #11：HTTP 非 200 分支同样记 StatsCollector + 进度事件
             # （此前漏计，summary JSON / HTML 报告的失败分布看不到 http 层失败）
-            _COLLECTOR.record("ChatCompletions", False, ttfb_ms=0.0,
+            _COLLECTOR.record(req_type, False, ttfb_ms=0.0,
                               latency_ms=sr.elapsed_ms, length=0,
                               fail_category=sr.fail_category)
             progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                           "ok": False, "req_type": "ChatCompletions", "ttfb_ms": 0.0,
+                           "ok": False, "req_type": req_type, "ttfb_ms": 0.0,
                            "elapsed_ms": round(sr.elapsed_ms, 2)})
             return None, sr
 
@@ -272,11 +279,11 @@ class OpenAICompatChatUser(HttpUser):
                                     min_answer_len=ANSWER_MIN_LEN)
         if sr.fail_category is not None:
             response.failure(sr.fail_reason or sr.fail_category)
-            _COLLECTOR.record("ChatCompletions", False, ttfb_ms=sr.ttfb_ms or 0.0,
+            _COLLECTOR.record(req_type, False, ttfb_ms=sr.ttfb_ms or 0.0,
                               latency_ms=sr.elapsed_ms, length=0,
                               fail_category=sr.fail_category)
             progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                           "ok": False, "req_type": "ChatCompletions",
+                           "ok": False, "req_type": req_type,
                            "ttfb_ms": round(sr.ttfb_ms or 0.0, 2),
                            "elapsed_ms": round(sr.elapsed_ms, 2)})
             return None, sr
@@ -284,11 +291,11 @@ class OpenAICompatChatUser(HttpUser):
         result = {"answer": sr.answer, "ttfb_ms": sr.ttfb_ms, "elapsed_ms": sr.elapsed_ms,
                   "itl_ms": sr.itl_ms, "gen_chars_per_sec": sr.gen_chars_per_sec,
                   "chunk_count": sr.chunk_count}
-        _COLLECTOR.record("ChatCompletions", True, ttfb_ms=sr.ttfb_ms or 0.0,
+        _COLLECTOR.record(req_type, True, ttfb_ms=sr.ttfb_ms or 0.0,
                           latency_ms=sr.elapsed_ms, length=len(sr.answer),
                           itl_ms=sr.itl_ms, gen_chars_per_sec=sr.gen_chars_per_sec)
         progress.emit({"type": "round_done", "user_id": "locust", "round": 0,
-                       "ok": True, "req_type": "ChatCompletions",
+                       "ok": True, "req_type": req_type,
                        "ttfb_ms": round(sr.ttfb_ms or 0.0, 2),
                        "elapsed_ms": round(sr.elapsed_ms, 2)})
         return result, sr

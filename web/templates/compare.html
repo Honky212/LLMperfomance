@@ -82,7 +82,7 @@
 
 <div class="card">
   <h2>By Request Type</h2>
-  {% for req_type in ['NewChat', 'ContinueChat', 'Aggregated'] %}
+  {% for req_type in (group_names or ['NewChat', 'ContinueChat', 'Aggregated']) %}
   <h3>{{ req_type }}</h3>
   <table>
     <tr>
